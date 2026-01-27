@@ -131,7 +131,7 @@ def run_sequence(seq: Sequence, tracker: Tracker, debug=False, num_gpu=8):
             # else:
             #     bbox_file = '{}/{}.txt'.format(tracker.results_dir, seq.name)
 
-            ''' 2022.9.18 update code '''
+            ''' 2022.9.z18 update code '''
             bbox_file = '{}/{}/{}.txt'.format(tracker.results_dir, seq.dataset, seq.name)
 
             return os.path.isfile(bbox_file)

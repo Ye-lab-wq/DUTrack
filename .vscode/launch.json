@@ -1,0 +1,81 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+
+
+    {
+      "name": "DUTrack - OTB (debug one sequence)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--sequence",
+        "Biker",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1", 
+        "--debug",
+        "1"
+      ]
+    },
+    {
+      "name": "DUTrack - OTB (run all)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--runid",
+        "47",
+        "--threads",
+        "0 ",
+        "--num_gpus",
+        "1",
+        "--debug", "0"
+      ]
+    },
+    {
+      "name": "Test FLOPs",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/profile_model.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--script", "dutrack",
+        "--config", "dutrack_384_full",
+        "--dynamic_descript", "1",
+        "--descript_update_interval", "5",
+      ]
+    },
+    {
+      "name": "Video Test",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/video_demo.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--debug", "1",
+      ]
+    }
+  ]
+}

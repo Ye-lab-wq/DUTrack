@@ -1,0 +1,8 @@
+output/
+models/
+pretrained_models/
+lib/models/__pycache__/
+lib/__pycache__/
+lib/config/__pycache__/
+lib/config/dutrack/__pycache__/
+lib/config/__pycache__/__init__.cpython-38.pyc

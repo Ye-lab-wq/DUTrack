@@ -51,7 +51,7 @@ class BaseBackbone(nn.Module):
         patch_pos_embed = patch_pos_embed.view(B, E, P_H, P_W)
 
         #temporal token
-        self.temporal_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
+        self.temporal_token =  nn.Parameter(torch.zeros(1, 1, self.embed_dim))
         if self.add_cls_token:
             temporal_pos_embed = self.pos_embed[:, 0:1, :]
             self.temporal_pos_embed = nn.Parameter(temporal_pos_embed)

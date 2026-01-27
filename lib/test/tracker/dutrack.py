@@ -82,21 +82,40 @@ class DUTrack(BaseTracker):
             return {"all_boxes": all_boxes_save}
 
     def ifupdata(self, his, cur, h, w):
-        x1,y1,w1,h1 = his
-        x2,y2,w2,h2 = cur
-        stride = 1/32
-
-        s1,s2 = w1*h1,w2*h2
-        distance = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
-        if s1>s2:
-            i = s2/s1
-        else:
-            i = s1/s2
+        # Original implementation (always returns True)
+        # x1,y1,w1,h1 = his
+        # x2,y2,w2,h2 = cur
+        # stride = 1/32
+        #
+        # s1,s2 = w1*h1,w2*h2
+        # distance = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+        # if s1>s2:
+        #     i = s2/s1
+        # else:
+        #     i = s1/s2
         # if i < 0.95 :
         #     return True
         # if distance > stride*h or distance > stride*w :
         #     return True
-        return True
+        # return True
+
+        # Updated implementation (paper-style: scale + center displacement)
+        x1, y1, w1, h1 = his
+        x2, y2, w2, h2 = cur
+        stride = 1 / 32
+
+        s1, s2 = w1 * h1, w2 * h2
+        area_ratio = min(s1, s2) / (max(s1, s2) + 1e-12)
+
+        c1x, c1y = x1 + 0.5 * w1, y1 + 0.5 * h1
+        c2x, c2y = x2 + 0.5 * w2, y2 + 0.5 * h2
+        distance = math.sqrt((c1x - c2x) ** 2 + (c1y - c2y) ** 2)
+
+        if area_ratio < 0.95:
+            return True
+        if distance > stride * h or distance > stride * w:
+            return True
+        return False
 
     def track(self, image, info: dict = None):
         H, W, _ = image.shape

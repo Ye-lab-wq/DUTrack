@@ -52,8 +52,8 @@ MODEL:
     STRIDE: 16
     TOP_K: 3
     TYPE: itpn_base
-    BERT_DIR: '/home/local_data/lxh/data/bert-base-cased'
-    BLIP_DIR: '/home/local_data/lxh/data/blip-image-captioning-base'
+    BERT_DIR: '/home/b520/Downloads/yelin/DUTrack/models/bert-base-uncased'
+    BLIP_DIR: '/home/b520/Downloads/yelin/DUTrack/models/blip-image-captioning-base'
   EXTRA_MERGER: false
   HEAD:
     NUM_CHANNELS: 256
@@ -61,7 +61,7 @@ MODEL:
   PRETRAIN_FILE: DUTrack_Pretrained_384_full.pth.tar
   RETURN_INTER: false
 TEST:
-  EPOCH: 50
+  EPOCH: 47
   MEMORY_THRESHOLD: 1000
   SEARCH_FACTOR: 5.0
   SEARCH_SIZE: 384
