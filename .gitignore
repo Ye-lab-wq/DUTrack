@@ -1,8 +1,31 @@
 output/
 models/
 pretrained_models/
-lib/models/__pycache__/
-lib/__pycache__/
-lib/config/__pycache__/
-lib/config/dutrack/__pycache__/
-lib/config/__pycache__/__init__.cpython-38.pyc
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+__pycache__/
+*.egg-info/
+dist/
+build/
+.env
+.venv
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
