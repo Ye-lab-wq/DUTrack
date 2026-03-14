@@ -7,19 +7,26 @@ from lib.test.evaluation import get_dataset, trackerlist
 
 
 trackers = []
-dataset_name = 'otb_lang'
-# dataset_name = 'lasot' # lasot_extension_subset
+# dataset_name = 'otb_lang'
+dataset_name = 'lasot' # lasot_extension_subset
 
 report_name = f'{dataset_name}_compare'
 
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full', dataset_name=dataset_name,
-	                    display_name='DUTrack'))
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_DTCM', dataset_name=dataset_name,
-                            display_name='dutrack_dutrack_384_full_047_DTCM'))
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_updatekey', dataset_name=dataset_name,
-                            display_name='dutrack_dutrack_384_full_047_updatekey'))
-
-
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full', dataset_name=dataset_name,
+# 	                    display_name='DUTrack'))                
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_updatekey', dataset_name=dataset_name,
+#                             display_name='dutrack_384_full_047_updatekey'))
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_croppatch', dataset_name=dataset_name,
+#                             display_name='dutrack_384_full_047_croppatch'))
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_onlyDTCM', dataset_name=dataset_name,
+#                             display_name='dutrack_384_full_047_onlyDTCM'))                            
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_patch', dataset_name=dataset_name,
+#                             display_name='dutrack_384_full_047_patch'))
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_indexpatch', dataset_name=dataset_name,
+#                             display_name='dutrack_384_full_047_indexpatch'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_token', dataset_name=dataset_name,
+                            display_name='dutrack_384_full_047_token'))
+                            
 # For VOT evaluate
 dataset = get_dataset(dataset_name)
 # dataset = get_dataset('otb', 'nfs', 'uav', 'tc128ce')

@@ -50,7 +50,13 @@ class DUTrack(BaseTracker):
         self.z_dict1 = {}
         self.descriptgenRefiner = descriptgenRefiner(params.cfg.MODEL.BACKBONE.BLIP_DIR,params.cfg.MODEL.BACKBONE.BERT_DIR)
 
+        self.dtcm_token_enable = bool(getattr(self.cfg.TEST, 'DTCM_TOKEN_ENABLE', False))
+        self.network.use_dtcm_token = self.dtcm_token_enable
+
     def initialize(self, image, info: dict):
+        self.network.track_query = None
+        if hasattr(self.network, 'dtcm_tokens'):
+            self.network.dtcm_tokens = None
         # forward the template once
         z_patch_arr, resize_factor, z_amask_arr = sample_target(image, info['init_bbox'], self.params.template_factor,
                                                     output_sz=self.params.template_size)
@@ -140,7 +146,8 @@ class DUTrack(BaseTracker):
         # --------- select memory frames ---------
 
         with torch.no_grad():
-            out_dict = self.network.forward(template=template_list, search=[search.tensors],descript=[[self.descript]])
+            out_dict = self.network.forward(template=template_list, search=[search.tensors],
+                                            descript=[[self.descript]])
 
         if isinstance(out_dict, list):
             out_dict = out_dict[-1]
@@ -159,14 +166,10 @@ class DUTrack(BaseTracker):
 
         self.updata_key = self.ifupdata(self.his_state,self.state,H,W)
 
-
-
-
-
-
         # --------- save memory frames and masks ---------
         z_patch_arr, z_resize_factor, z_amask_arr = sample_target(image, self.state, self.params.template_factor,
                                                     output_sz=self.params.template_size)
+
         cur_frame = self.preprocessor.process(z_patch_arr, z_amask_arr)
         frame = cur_frame.tensors
         # mask = cur_frame.mask

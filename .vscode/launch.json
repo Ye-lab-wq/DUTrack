@@ -27,7 +27,7 @@
       ]
     },
     {
-      "name": "DUTrack - OTB (run all)",
+       "name": "DUTrack - OTB (run all)",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tracking/test.py",
@@ -39,6 +39,28 @@
         "dutrack_384_full",
         "--dataset_name",
         "otb_lang",
+        "--runid",
+        "47",
+        "--threads",
+        "0 ",
+        "--num_gpus",
+        "1",
+        "--debug", "0"
+      ]
+    },
+    {
+       "name": "DUTrack - lasot (run all)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "lasot",
         "--runid",
         "47",
         "--threads",

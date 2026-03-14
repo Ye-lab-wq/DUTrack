@@ -36,6 +36,8 @@ class DUTrack(nn.Module):
 
         self.track_query = None
         self.token_len = token_len
+        self.use_dtcm_token = False
+        self.dtcm_tokens = None
 
     def forward(self, template: torch.Tensor,
                 search: torch.Tensor,
@@ -45,7 +47,10 @@ class DUTrack(nn.Module):
 
         out_dict = []
         for i in range(len(search)):
-            x, aux_dict = self.backbone(z=template.copy(), x=search[i], l=list(descript[i]), temporal_query=self.track_query, top_K=self.token_len)
+            dtcm_tokens = self.dtcm_tokens if self.use_dtcm_token else None
+            x, aux_dict = self.backbone(z=template.copy(), x=search[i], l=list(descript[i]),
+                                        temporal_query=self.track_query, top_K=self.token_len,
+                                        dtcm_tokens=dtcm_tokens)
             feat_last = x
             if isinstance(x, list):
                 feat_last = x[-1]
@@ -54,6 +59,8 @@ class DUTrack(nn.Module):
 
             if self.backbone.add_cls_token:
                 self.track_query = (x[:, :self.token_len].clone()).detach()  # stop grad  (B, N, C)
+            if self.use_dtcm_token and 'temproal_token' in aux_dict:
+                self.dtcm_tokens = aux_dict['temproal_token'].detach()
 
             att = torch.matmul(enc_opt, x[:, :1].transpose(1, 2))  # (B, HW, N)
             opt = (enc_opt.unsqueeze(-1) * att.unsqueeze(-2)).permute((0, 3, 2, 1)).contiguous()  # (B, HW, C, N) --> (B, N, C, HW)

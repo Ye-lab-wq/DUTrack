@@ -997,11 +997,10 @@ class Fast_iTPN(BaseBackbone):
 
         return l
 
-    def _fusion_feat(self,z,x,l,B,temporal_query):
+    def _fusion_feat(self, z, x, l, B, temporal_query):
         if self.add_cls_token:
             temporal_init = self.temporal_token.expand(B, 1, -1)
             temporal_init = temporal_init + self.temporal_pos_embed
-
 
         x = combine_tokens(z, x, mode=self.cat_mode)
         x = combine_tokens(l, x, mode=self.cat_mode)
@@ -1024,16 +1023,17 @@ class Fast_iTPN(BaseBackbone):
 
         return x,attn
 
-    def _split_feat(self,attn,topk):
-        #fusion_feat(bs,temporal_l + descript_l + z_l + x_l)
+    def _split_feat(self, attn, topk):
+        # fusion_feat(bs, temporal + language + template + search)
         lens_x = self.pos_embed_x.shape[1]
-        attn = torch.mean(attn,dim=1)
-        # x = fusion_feat[:, -lens_x:]
-        l2s = attn[:,topk,-lens_x:]
-        max,index = torch.sort(l2s,dim=1,descending=True)
-        top_index = index[:,:topk]
+        attn = torch.mean(attn, dim=1)  # (B, L, L)
 
-        return top_index,l2s
+        # Use language [CLS] as query row for DTCM scoring.
+        cls_index = 1 if self.add_cls_token else 0
+        l2s = attn[:, cls_index, -lens_x:]  # (B, lens_x), scores over all search tokens
+        top_index = torch.topk(l2s, k=topk, dim=1, largest=True).indices  # (B, topk)
+
+        return top_index, l2s
 
     def _finder(self,x,index):
         index_expanded = index.unsqueeze(2)
@@ -1041,11 +1041,14 @@ class Fast_iTPN(BaseBackbone):
         return result
 
 
-    def forward_features(self, z, x, l, temporal_query=None, top_K=None):
+    def forward_features(self, z, x, l, temporal_query=None, top_K=None, dtcm_tokens=None):
         B = x.shape[0]
         z_feat = self._z_feat(z,B)
         x_feat = self._x_feat(x)
         l_feat = self._l_feat(l)
+        if dtcm_tokens is not None:
+            # Append dynamic template tokens selected from previous search frame.
+            z_feat = torch.cat((z_feat, dtcm_tokens), dim=1)
         fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
         top_index,att_l2s = self._split_feat(attn,top_K)
         l2s = self._finder(x_feat,top_index)
@@ -1055,7 +1058,7 @@ class Fast_iTPN(BaseBackbone):
 
         return fusion_feat, aux_dict
 
-    def forward(self, z, x, l, temporal_query, top_K, **kwargs):
+    def forward(self, z, x, l, temporal_query, top_K, dtcm_tokens=None, **kwargs):
         """
         Joint feature extraction and relation modeling for the basic ViT backbone.
         Args:
@@ -1067,7 +1070,7 @@ class Fast_iTPN(BaseBackbone):
             x (torch.Tensor): merged template and search region feature, [B, L_z+L_x, C]
             attn : None
         """
-        x, aux_dict = self.forward_features(z, x, l, temporal_query, top_K)
+        x, aux_dict = self.forward_features(z, x, l, temporal_query, top_K, dtcm_tokens)
 
         return x, aux_dict
 
