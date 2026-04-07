@@ -3,7 +3,6 @@ import sys
 import numpy as np
 from lib.test.utils.load_text import load_text
 import torch
-import pickle
 from tqdm import tqdm
 
 env_path = os.path.join(os.path.dirname(__file__), '../../..')
@@ -11,6 +10,20 @@ if env_path not in sys.path:
     sys.path.append(env_path)
 
 from lib.test.evaluation.environment import env_settings
+
+
+def _sanitize_report_name(report_name):
+    return ''.join(c if c.isalnum() or c in ('-', '_', '.') else '_' for c in report_name)
+
+
+def _get_result_plot_path(settings, dataset, report_name):
+    if len(dataset) > 0 and hasattr(dataset[0], 'dataset'):
+        dataset_name = dataset[0].dataset
+    else:
+        dataset_name = _sanitize_report_name(report_name)
+    result_plot_path = os.path.join(settings.result_plot_path, dataset_name)
+    os.makedirs(result_plot_path, exist_ok=True)
+    return result_plot_path
 
 
 def calc_err_center(pred_bb, anno_bb, normalized=False):
@@ -104,10 +117,7 @@ def extract_results(trackers, dataset, report_name, skip_missing_seq=False, plot
     settings = env_settings()
     eps = 1e-16
 
-    result_plot_path = os.path.join(settings.result_plot_path, report_name)
-
-    if not os.path.exists(result_plot_path):
-        os.makedirs(result_plot_path)
+    result_plot_path = _get_result_plot_path(settings, dataset, report_name)
 
     threshold_set_overlap = torch.arange(0.0, 1.0 + plot_bin_gap, plot_bin_gap, dtype=torch.float64)
     threshold_set_center = torch.arange(0, 51, dtype=torch.float64)
@@ -177,8 +187,5 @@ def extract_results(trackers, dataset, report_name, skip_missing_seq=False, plot
                  'threshold_set_overlap': threshold_set_overlap.tolist(),
                  'threshold_set_center': threshold_set_center.tolist(),
                  'threshold_set_center_norm': threshold_set_center_norm.tolist()}
-
-    with open(result_plot_path + '/eval_data.pkl', 'wb') as fh:
-        pickle.dump(eval_data, fh)
 
     return eval_data

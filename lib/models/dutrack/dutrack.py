@@ -15,7 +15,7 @@ from lib.utils.box_ops import box_xyxy_to_cxcywh
 class DUTrack(nn.Module):
     """ This is the base class for MMTrack """
 
-    def __init__(self, transformer, box_head, aux_loss=False, head_type="CORNER", token_len=1):
+    def __init__(self, transformer, box_head, aux_loss=False, head_type="CORNER", token_len=1, top_k=1):
         """ Initializes the model.
         Parameters:
             transformer: torch module of the transformer architecture.
@@ -36,6 +36,7 @@ class DUTrack(nn.Module):
 
         self.track_query = None
         self.token_len = token_len
+        self.top_k = top_k
         self.use_dtcm_token = False
         self.dtcm_tokens = None
 
@@ -49,7 +50,7 @@ class DUTrack(nn.Module):
         for i in range(len(search)):
             dtcm_tokens = self.dtcm_tokens if self.use_dtcm_token else None
             x, aux_dict = self.backbone(z=template.copy(), x=search[i], l=list(descript[i]),
-                                        temporal_query=self.track_query, top_K=self.token_len,
+                                        temporal_query=self.track_query, top_K=self.top_k,
                                         dtcm_tokens=dtcm_tokens)
             feat_last = x
             if isinstance(x, list):
@@ -139,7 +140,8 @@ def build_dutrack(cfg, training=True):
         box_head,
         aux_loss=False,
         head_type=cfg.MODEL.HEAD.TYPE,
-        token_len=cfg.MODEL.BACKBONE.TOP_K,
+        token_len=cfg.MODEL.BACKBONE.TOKEN_LEN,
+        top_k=cfg.MODEL.BACKBONE.TOP_K,
     )
     if 'DUTrack' in cfg.MODEL.PRETRAIN_FILE and training:
         current_dir = os.path.dirname(os.path.abspath(__file__))  # This is your Project Root

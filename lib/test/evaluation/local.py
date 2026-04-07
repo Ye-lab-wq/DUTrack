@@ -7,7 +7,7 @@ def local_env_settings():
 
     settings.davis_dir = ''
     settings.got10k_lmdb_path = '/home/b520/Downloads/yelin/data/got10k_lmdb'
-    settings.got10k_path = '/home/b520/Downloads/yelin/data/got10k'
+    settings.got10k_path = '/media/b520/KESU1/got10k'
     settings.got_packed_results_path = ''
     settings.got_reports_path = ''
     settings.itb_path = '/home/b520/Downloads/yelin/data/itb'
@@ -26,7 +26,7 @@ def local_env_settings():
     settings.segmentation_path = '/home/b520/Downloads/yelin/DUTrack/output/test/segmentation_results'
     settings.tc128_path = '/home/b520/Downloads/yelin/data/TC128'
     settings.tn_packed_results_path = ''
-    settings.tnl2k_path = '/home/b520/Downloads/yelin/data/TNL2K'
+    settings.tnl2k_path = '/media/b520/KESU1/TNL2K'
     settings.tpl_path = ''
     settings.trackingnet_path = '/home/b520/Downloads/yelin/data/trackingnet'
     settings.uav_path = '/home/b520/Downloads/yelin/data/uav'
@@ -36,4 +36,3 @@ def local_env_settings():
     settings.youtubevos_dir = ''
 
     return settings
-

@@ -11,6 +11,7 @@ import time
 from torch.utils.data.distributed import DistributedSampler
 from torch.cuda.amp import autocast
 from torch.cuda.amp import GradScaler
+from tqdm import tqdm
 
 from lib.utils.misc import get_world_size
 
@@ -71,7 +72,17 @@ class LTRTrainer(BaseTrainer):
 
         self._init_timing()
 
-        for i, data in enumerate(loader, 1):
+        show_pbar = self.settings.local_rank in [-1, 0] and os.isatty(1)
+        data_iter = tqdm(
+            loader,
+            total=loader.__len__(),
+            desc='{} ep{}'.format(loader.name, self.epoch),
+            dynamic_ncols=True,
+            leave=False,
+            disable=not show_pbar
+        )
+
+        for i, data in enumerate(data_iter, 1):
             self.data_read_done_time = time.time()
             # get inputs
             if self.move_data_to_gpu:
@@ -90,13 +101,14 @@ class LTRTrainer(BaseTrainer):
 
             # backward pass and update weights
             if loader.training:
-                self.optimizer.zero_grad()
                 if not self.use_amp:
+                    self.optimizer.zero_grad()
                     loss.backward()
                     if self.settings.grad_clip_norm > 0:
                         torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
                     self.optimizer.step()
                 else:
+                    self.optimizer.zero_grad()
                     self.scaler.scale(loss).backward()
                     if self.settings.grad_clip_norm > 0:
                         self.scaler.unscale_(self.optimizer)

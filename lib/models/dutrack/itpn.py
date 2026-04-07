@@ -1023,13 +1023,14 @@ class Fast_iTPN(BaseBackbone):
 
         return x,attn
 
-    def _split_feat(self, attn, topk):
+    def _split_feat(self, attn, topk, temporal_len):
         # fusion_feat(bs, temporal + language + template + search)
         lens_x = self.pos_embed_x.shape[1]
         attn = torch.mean(attn, dim=1)  # (B, L, L)
 
-        # Use language [CLS] as query row for DTCM scoring.
-        cls_index = 1 if self.add_cls_token else 0
+        # Language tokens are appended right after the temporal prefix.
+        # The first language token is BERT [CLS], which is used by the paper for DTCM scoring.
+        cls_index = temporal_len
         l2s = attn[:, cls_index, -lens_x:]  # (B, lens_x), scores over all search tokens
         top_index = torch.topk(l2s, k=topk, dim=1, largest=True).indices  # (B, topk)
 
@@ -1050,10 +1051,12 @@ class Fast_iTPN(BaseBackbone):
             # Append dynamic template tokens selected from previous search frame.
             z_feat = torch.cat((z_feat, dtcm_tokens), dim=1)
         fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
-        top_index,att_l2s = self._split_feat(attn,top_K)
+        temporal_len = temporal_query.shape[1] if temporal_query is not None else (1 if self.add_cls_token else 0)
+        top_index,att_l2s = self._split_feat(attn, top_K, temporal_len)
         l2s = self._finder(x_feat,top_index)
         aux_dict = {"attn": attn,
                     "attn_l2s": att_l2s,
+                    "attn_top_index": top_index,
                     "temproal_token": l2s}
 
         return fusion_feat, aux_dict

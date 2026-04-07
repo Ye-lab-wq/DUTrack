@@ -1,6 +1,8 @@
 output/
 models/
 pretrained_models/
+tensorboard/
+*.pdf
 
 # Python
 *.py[cod]

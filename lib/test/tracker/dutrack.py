@@ -12,10 +12,11 @@ import cv2
 import os
 
 from lib.test.tracker.data_utils import Preprocessor
+from lib.test.evaluation.environment import env_settings
 from lib.utils.box_ops import clip_box
 from lib.utils.ce_utils import generate_mask_cond
 from lib.models.dutrack.i2d import descriptgenRefiner
-from tracking.draw_heatmap import visualize_attn
+from tracking.draw_heatmap import visualize_attn, visualize_cls_l2s_with_context
 
 
 class DUTrack(BaseTracker):
@@ -52,6 +53,14 @@ class DUTrack(BaseTracker):
 
         self.dtcm_token_enable = bool(getattr(self.cfg.TEST, 'DTCM_TOKEN_ENABLE', False))
         self.network.use_dtcm_token = self.dtcm_token_enable
+        self.save_cls_l2s_vis = bool(getattr(self.cfg.TEST, 'SAVE_CLS_L2S_VIS', False)) or \
+            os.environ.get('DUTRACK_SAVE_CLS_L2S', '0') == '1'
+        vis_root = getattr(self.cfg.TEST, 'SAVE_CLS_L2S_VIS_DIR', '')
+        if not vis_root:
+            model_name = os.path.basename(os.path.dirname(self.params.checkpoint.rstrip(os.sep)))
+            vis_root = os.path.join(env_settings().save_dir, 'test', 'vis_cls_l2s', model_name)
+        self.cls_l2s_vis_root = vis_root
+        self.last_update_metrics = None
 
     def initialize(self, image, info: dict):
         self.network.track_query = None
@@ -61,8 +70,13 @@ class DUTrack(BaseTracker):
         z_patch_arr, resize_factor, z_amask_arr = sample_target(image, info['init_bbox'], self.params.template_factor,
                                                     output_sz=self.params.template_size)
 
-        #update descript
-        self.descript = self.descriptgenRefiner(image,cls=info['class'])
+        # Prefer the dataset-provided language description at initialization.
+        # Fall back to BLIP captioning only when the dataset does not supply text.
+        init_text = info.get('init_text_description')
+        if init_text is not None and str(init_text).strip():
+            self.descript = str(init_text).strip()
+        else:
+            self.descript = self.descriptgenRefiner(image, cls=info['class'])
         self.his_state = info['init_bbox']
         self.updata_key = False
 
@@ -117,15 +131,34 @@ class DUTrack(BaseTracker):
         c2x, c2y = x2 + 0.5 * w2, y2 + 0.5 * h2
         distance = math.sqrt((c1x - c2x) ** 2 + (c1y - c2y) ** 2)
 
+        triggered = False
         if area_ratio < 0.95:
-            return True
+            triggered = True
         if distance > stride * h or distance > stride * w:
-            return True
-        return False
+            triggered = True
+
+        self.last_update_metrics = {
+            'triggered': triggered,
+            'area_ratio': float(area_ratio),
+            'distance': float(distance),
+            'distance_h_thresh': float(stride * h),
+            'distance_w_thresh': float(stride * w),
+        }
+        return triggered
+
+    @staticmethod
+    def _compute_search_crop_box(target_bb, search_area_factor):
+        x, y, w, h = target_bb
+        crop_sz = math.ceil(math.sqrt(w * h) * search_area_factor)
+        x1 = round(x + 0.5 * w - crop_sz * 0.5)
+        y1 = round(y + 0.5 * h - crop_sz * 0.5)
+        return [x1, y1, crop_sz, crop_sz]
 
     def track(self, image, info: dict = None):
         H, W, _ = image.shape
         self.frame_id += 1
+        prev_state = list(self.state)
+        search_crop_box = self._compute_search_crop_box(prev_state, self.params.search_factor)
         x_patch_arr, resize_factor, x_amask_arr = sample_target(image, self.state, self.params.search_factor,
                                                                 output_sz=self.params.search_size)  # (x1, y1, w, h)
         search = self.preprocessor.process(x_patch_arr, x_amask_arr)
@@ -163,6 +196,37 @@ class DUTrack(BaseTracker):
         pred_box = (pred_boxes.mean(dim=0) * self.params.search_size / resize_factor).tolist()  # (cx, cy, w, h) [0,1]
         # get the final box result
         self.state = clip_box(self.map_box_back(pred_box, resize_factor), H, W, margin=10)
+
+        if self.save_cls_l2s_vis and 'attn_l2s' in out_dict:
+            seq_dir = os.path.join(self.cls_l2s_vis_root, info['path'])
+            save_path = os.path.join(seq_dir, '{:04d}.jpg'.format(int(info['num'])))
+            top_indices = out_dict.get('attn_top_index')
+            if top_indices is not None:
+                top_indices = top_indices[0]
+            metrics = self.last_update_metrics or {}
+            status_lines = [
+                'updatekey(prev frame): {} | area_ratio={:.4f} | distance={:.2f}'.format(
+                    metrics.get('triggered', False),
+                    metrics.get('area_ratio', float('nan')),
+                    metrics.get('distance', float('nan')),
+                ),
+                'thresholds: area_ratio<0.95 or distance>max({:.2f}, {:.2f})'.format(
+                    metrics.get('distance_h_thresh', float('nan')),
+                    metrics.get('distance_w_thresh', float('nan')),
+                )
+            ]
+            visualize_cls_l2s_with_context(
+                out_dict['attn_l2s'][0],
+                x_patch_arr,
+                image,
+                save_path,
+                top_indices=top_indices,
+                search_crop_box=search_crop_box,
+                ref_box=prev_state,
+                pred_box=self.state,
+                description=self.descript,
+                status_lines=status_lines,
+            )
 
         self.updata_key = self.ifupdata(self.his_state,self.state,H,W)
 

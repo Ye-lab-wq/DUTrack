@@ -1,39 +1,173 @@
 {
   "version": "0.2.0",
   "configurations": [
-
-
     {
-      "name": "DUTrack - OTB (debug one sequence)",
+      "name": "DUTrack Train - Reinject Debug",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/lib/train/run_training.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
+      "args": [
+        "--script", "dutrack",
+        "--config", "dutrack_384_lasot_dynamic_token_reinject_debug",
+        "--save_dir", "${workspaceFolder}/output",
+        "--local_rank", "-1",
+        "--use_lmdb", "0",
+        "--use_wandb", "0",
+        "--seed", "42"
+      ]
+    },
+    {
+      "name": "DUTrack Train - Reinject Finetune",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/lib/train/run_training.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
+      "args": [
+        "--script", "dutrack",
+        "--config", "dutrack_384_lasot_dynamic_token_reinject_ft",
+        "--save_dir", "${workspaceFolder}/output",
+        "--local_rank", "-1",
+        "--use_lmdb", "0",
+        "--use_wandb", "0",
+        "--seed", "42"
+      ]
+    },
+    {
+      "name": "DUTrack Test - GOT10k Val (runid 15,20)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test_multi_runid.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
+      "args": [
+        "dutrack",
+        "dutrack_384_lasot_dynamic_token_reinject_ft",
+        "--runids",
+        "15,20",
+        "--dataset_name",
+        "got10k_val",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "0"
+      ]
+    },
+    {
+      "name": "DUTrack Test - LaSOT (runid 15,20)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test_multi_runid.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
+      "args": [
+        "dutrack",
+        "dutrack_384_lasot_dynamic_token_reinject_ft",
+        "--runids",
+        "15,20",
+        "--dataset_name",
+        "lasot",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "0"
+      ]
+    },
+    {
+      "name": "DUTrack Test - OTB_LANG (runid 15,20)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test_multi_runid.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
+      "args": [
+        "dutrack",
+        "dutrack_384_lasot_dynamic_token_reinject_ft",
+        "--runids",
+        "15,20",
+        "--dataset_name",
+        "otb_lang",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "0"
+      ]
+    },
+    {
+      "name": "DUTrack Test - OTB_LANG Debug One Sequence",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tracking/test.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
       "args": [
         "dutrack",
         "dutrack_384_full",
         "--dataset_name",
         "otb_lang",
+        "--runid",
+        "47",
         "--sequence",
         "Biker",
         "--threads",
         "0",
         "--num_gpus",
-        "1", 
+        "1",
         "--debug",
         "1"
       ]
     },
     {
-       "name": "DUTrack - OTB (run all)",
+      "name": "DUTrack Test - OTB_LANG CLS->Search Vis",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tracking/test.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128",
+        "DUTRACK_SAVE_CLS_L2S": "1"
+      },
       "args": [
         "dutrack",
         "dutrack_384_full",
@@ -41,62 +175,39 @@
         "otb_lang",
         "--runid",
         "47",
+        "--sequence",
+        "Biker",
         "--threads",
-        "0 ",
+        "0",
         "--num_gpus",
         "1",
-        "--debug", "0"
+        "--debug",
+        "1"
       ]
     },
     {
-       "name": "DUTrack - lasot (run all)",
+      "name": "DUTrack Test - TNL2K UpdateKey (ep47)",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tracking/test.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"
+      },
       "args": [
         "dutrack",
-        "dutrack_384_full",
+        "dutrack_384_full_updatekey",
         "--dataset_name",
-        "lasot",
-        "--runid",
-        "47",
+        "tnl2k",
         "--threads",
-        "0 ",
+        "0",
         "--num_gpus",
         "1",
-        "--debug", "0"
-      ]
-    },
-    {
-      "name": "Test FLOPs",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/tracking/profile_model.py",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [
-        "--script", "dutrack",
-        "--config", "dutrack_384_full",
-        "--dynamic_descript", "1",
-        "--descript_update_interval", "5",
-      ]
-    },
-    {
-      "name": "Video Test",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/tracking/video_demo.py",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [
-        "dutrack",
-        "dutrack_384_full",
-        "--debug", "1",
+        "--debug",
+        "0"
       ]
     }
   ]

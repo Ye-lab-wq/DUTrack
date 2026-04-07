@@ -48,9 +48,8 @@ class OTB_LangDataset(BaseDataset):
         text_dsp = load_str(text_dsp_path)
         text_dsp = clean_string(text_dsp)
         
-        return Sequence(sequence_info['name'], frames, 'otb_lang', ground_truth_rect[init_omit:,:])
-        # return Sequence(sequence_info['name'], frames, 'otb_lang', ground_truth_rect[init_omit:, :],
-        #                 text_description=text_dsp, object_class=sequence_info['object_class'])
+        return Sequence(sequence_info['name'], frames, 'otb_lang', ground_truth_rect[init_omit:, :],
+                        text_description=text_dsp, object_class=sequence_info['object_class'])
 
     def __len__(self):
         return len(self.sequence_info_list)

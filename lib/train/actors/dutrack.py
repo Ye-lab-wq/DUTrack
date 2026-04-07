@@ -37,6 +37,18 @@ class DUTrackActor(BaseActor):
         return loss, status
 
     def forward_pass(self, data):
+        # Reset temporal states before each batch and set dynamic-token behavior for training.
+        net_ref = self.net.module if hasattr(self.net, "module") else self.net
+        train_dtcm = bool(getattr(self.cfg.TRAIN, "DTCM_TOKEN_ENABLE", False))
+        if not train_dtcm:
+            train_dtcm = bool(getattr(self.cfg.TEST, "DTCM_TOKEN_ENABLE", False))
+        if hasattr(net_ref, "use_dtcm_token"):
+            net_ref.use_dtcm_token = train_dtcm
+        if hasattr(net_ref, "track_query"):
+            net_ref.track_query = None
+        if hasattr(net_ref, "dtcm_tokens"):
+            net_ref.dtcm_tokens = None
+
         template_list = []
         search_list = []
 

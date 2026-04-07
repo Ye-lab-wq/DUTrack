@@ -62,6 +62,7 @@ cfg.TRAIN.BBOX_TASK = False
 cfg.TRAIN.CE_START_EPOCH = 20  # candidate elimination start epoch
 cfg.TRAIN.CE_WARM_EPOCH = 80  # candidate elimination warm up epoch
 cfg.TRAIN.DROP_PATH_RATE = 0.1  # drop path rate for ViT backbone
+cfg.TRAIN.DTCM_TOKEN_ENABLE = False
 
 # TRAIN.SCHEDULER
 cfg.TRAIN.SCHEDULER = edict()
@@ -108,8 +109,10 @@ cfg.TEST.MEMORY_THRESHOLD = 1000
 cfg.TEST.SEARCH_FACTOR = 5.0
 cfg.TEST.SEARCH_SIZE = 320
 cfg.TEST.EPOCH = 500
-
 cfg.TEST.DTCM_TOKEN_ENABLE = False
+cfg.TEST.CHECKPOINT_DIR = ""
+cfg.TEST.SAVE_CLS_L2S_VIS = False
+cfg.TEST.SAVE_CLS_L2S_VIS_DIR = ""
 
 
 def _edict2dict(dest_dict, src_edict):
