@@ -21,13 +21,21 @@ def parameters(yaml_name: str, run_id=None):
     params.search_size = cfg.TEST.SEARCH_SIZE
 
     # Network checkpoint path
+    checkpoint_dir = os.path.join(save_dir, "checkpoints/train/dutrack/%s" % yaml_name)
     if run_id is None:
-        params.checkpoint = os.path.join(save_dir, "checkpoints/train/dutrack/%s/DUTrack_ep%04d.pth.tar" %
-                                        (yaml_name, cfg.TEST.EPOCH))
+        checkpoint_name = "DUTrack_ep%04d.pth.tar" % cfg.TEST.EPOCH
+    elif isinstance(run_id, str):
+        run_id_key = run_id.lower()
+        if run_id_key in ("best", "latest"):
+            checkpoint_name = "DUTrack_%s.pth.tar" % run_id_key
+        else:
+            run_id = int(run_id)
+            checkpoint_name = "DUTrack_ep%04d.pth.tar" % run_id
     else:
-        params.checkpoint = os.path.join(save_dir, "checkpoints/train/dutrack/%s/DUTrack_ep%04d.pth.tar" %
-                                        (yaml_name, run_id))
-    
+        checkpoint_name = "DUTrack_ep%04d.pth.tar" % run_id
+
+    params.checkpoint = os.path.join(checkpoint_dir, checkpoint_name)
+
     # whether to save boxes from all queries
     params.save_all_boxes = False
 

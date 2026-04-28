@@ -38,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run tracker on sequence or dataset.')
     parser.add_argument('tracker_name', type=str, help='Name of tracking method.')
     parser.add_argument('tracker_param', type=str, help='Name of config file.')
-    parser.add_argument('--runid', type=int, default=None, help='The run id.')
+    parser.add_argument('--runid', type=str, default=None, help='The run id. Supports epoch numbers, "best", and "latest".')
     parser.add_argument('--dataset_name', type=str, default='otb', help='Name of dataset (otb, nfs, uav, tpl, vot, tn, gott, gotv, lasot).')
     parser.add_argument('--sequence', type=str, default=None, help='Sequence number or name.')
     parser.add_argument('--debug', type=int, default=0, help='Debug level.')
@@ -52,7 +52,14 @@ def main():
     except:
         seq_name = args.sequence
 
-    run_tracker(args.tracker_name, args.tracker_param, args.runid, args.dataset_name, seq_name, args.debug,
+    run_id = args.runid
+    if run_id is not None:
+        try:
+            run_id = int(run_id)
+        except ValueError:
+            run_id = run_id
+
+    run_tracker(args.tracker_name, args.tracker_param, run_id, args.dataset_name, seq_name, args.debug,
                 args.threads, num_gpus=args.num_gpus)
 
 

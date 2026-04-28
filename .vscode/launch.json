@@ -27,6 +27,34 @@
       ]
     },
     {
+      "name": "DUTrack - Bank OTB (debug one sequence)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128",
+        "DUTRACK_SAVE_CLS_L2S": "1"
+      },
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--sequence",
+        "Biker",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "1"
+      ]
+    },
+    {
       "name": "DUTrack - OTB (run all)",
       "type": "python",
       "request": "launch",
@@ -49,6 +77,80 @@
       ]
     },
     {
+      "name": "DUTrack - OTB Lang (current, vis)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128",
+        "DUTRACK_SAVE_CLS_L2S": "1"
+      },
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--runid",
+        "47",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "0"
+      ]
+    },
+    {
+      "name": "DUTrack - OTB Lang Prototype (debug one sequence)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--sequence",
+        "Biker",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "1"
+      ]
+    },
+    {
+      "name": "DUTrack - OTB Lang Prototype (run all)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tracking/test.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "dutrack",
+        "dutrack_384_full",
+        "--dataset_name",
+        "otb_lang",
+        "--runid",
+        "47",
+        "--threads",
+        "0",
+        "--num_gpus",
+        "1",
+        "--debug",
+        "0"
+      ]
+    },
+    {
       "name": "Test FLOPs",
       "type": "python",
       "request": "launch",
@@ -60,7 +162,7 @@
         "--script", "dutrack",
         "--config", "dutrack_384_full",
         "--dynamic_descript", "1",
-        "--descript_update_interval", "5",
+        "--descript_update_interval", "5"
       ]
     },
     {
@@ -74,7 +176,7 @@
       "args": [
         "dutrack",
         "dutrack_384_full",
-        "--debug", "1",
+        "--debug", "1"
       ]
     }
   ]

@@ -54,6 +54,12 @@ def run(settings):
     else:
         raise ValueError("illegal script name")
 
+    if getattr(cfg.TRAIN, "TRAIN_ONLY_TEMPLATE_PROTO", False):
+        for name, param in net.named_parameters():
+            param.requires_grad = name.startswith("template_proto_head.")
+        if settings.local_rank in [-1, 0]:
+            print("Freeze base DUTrack. Train only template_proto_head parameters.")
+
     # wrap networks to distributed one
     net.cuda()
     if settings.local_rank != -1:
@@ -70,7 +76,15 @@ def run(settings):
     if settings.script_name == "dutrack":
         focal_loss = FocalLoss()
         objective = {'giou': giou_loss, 'l1': l1_loss, 'focal': focal_loss, 'cls': BCEWithLogitsLoss()}
-        loss_weight = {'giou': cfg.TRAIN.GIOU_WEIGHT, 'l1': cfg.TRAIN.L1_WEIGHT, 'focal': 1.0, 'cls': 1.0}
+        loss_weight = {
+            'giou': cfg.TRAIN.GIOU_WEIGHT,
+            'l1': cfg.TRAIN.L1_WEIGHT,
+            'focal': 1.0,
+            'cls': 1.0,
+            'proto_target': cfg.TRAIN.TEMPLATE_PROTO_TARGET_WEIGHT,
+            'proto_split': cfg.TRAIN.TEMPLATE_PROTO_SPLIT_WEIGHT,
+            'proto_ctr': cfg.TRAIN.TEMPLATE_PROTO_CTR_WEIGHT,
+        }
         actor = DUTrackActor(net=net, objective=objective, loss_weight=loss_weight, settings=settings, cfg=cfg)
     else:
         raise ValueError("illegal script name")

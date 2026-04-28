@@ -728,6 +728,15 @@ class Fast_iTPN(BaseBackbone):
         self.descript_embedding = BertEmbeddings(bert_config)
         self.descript_embedding.apply(utils.init_weights)
         self.description_patch_pos_embed = PositionEmbeddingLearned(self.embed_dim, self.embed_dim)
+        # Learned token templates are injected on the template branch and marked by role.
+        self.template_token_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.template_token_norm = nn.LayerNorm(self.embed_dim)
+        self.template_token_pos_embed = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
+        self.template_token_type_embed = nn.ParameterDict({
+            'init': nn.Parameter(torch.zeros(1, 1, self.embed_dim)),
+            'history': nn.Parameter(torch.zeros(1, 1, self.embed_dim)),
+            'recent': nn.Parameter(torch.zeros(1, 1, self.embed_dim)),
+        })
 
         mlvl_dims = {'4': embed_dim // 4, '8': embed_dim // 2, '16': embed_dim}
         # split image into non-overlapping patches
@@ -799,6 +808,9 @@ class Fast_iTPN(BaseBackbone):
             trunc_normal_(self.pos_embed, std=.02)
         if self.cls_token is not None:
             trunc_normal_(self.cls_token, std=.02)
+        trunc_normal_(self.template_token_pos_embed, std=.02)
+        for embed in self.template_token_type_embed.values():
+            nn.init.zeros_(embed)
 
         self.apply(self._init_weights)
 
@@ -955,7 +967,7 @@ class Fast_iTPN(BaseBackbone):
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
-    def _z_feat(self,z,B):
+    def _z_feat(self,z,B,template_tokens=None):
         z = torch.stack(z, dim=1)
         _, T_z, C_z, H_z, W_z = z.shape
 
@@ -972,6 +984,28 @@ class Fast_iTPN(BaseBackbone):
         if T_z > 1:  # multiple memory frames
             z = z.view(B, T_z, -1, z.size()[-1]).contiguous()
             z = z.flatten(1, 2)
+
+        if template_tokens is not None:
+            token_chunks = []
+            if isinstance(template_tokens, dict):
+                # The tracker keeps init/history/recent tokens separate so the backbone
+                # can preserve their roles with dedicated type embeddings.
+                for role in ('init', 'history', 'recent'):
+                    role_tokens = template_tokens.get(role, None)
+                    if role_tokens is None:
+                        continue
+                    role_tokens = role_tokens.to(z.device)
+                    role_tokens = self.template_token_norm(self.template_token_proj(role_tokens))
+                    role_tokens = role_tokens + self.template_token_pos_embed + self.template_token_type_embed[role]
+                    token_chunks.append(role_tokens)
+            else:
+                template_tokens = template_tokens.to(z.device)
+                template_tokens = self.template_token_norm(self.template_token_proj(template_tokens))
+                template_tokens = template_tokens + self.template_token_pos_embed
+                token_chunks.append(template_tokens)
+
+            if token_chunks:
+                z = torch.cat(token_chunks + [z], dim=1)
 
         return z
 
@@ -1001,7 +1035,6 @@ class Fast_iTPN(BaseBackbone):
         if self.add_cls_token:
             temporal_init = self.temporal_token.expand(B, 1, -1)
             temporal_init = temporal_init + self.temporal_pos_embed
-
 
         x = combine_tokens(z, x, mode=self.cat_mode)
         x = combine_tokens(l, x, mode=self.cat_mode)
@@ -1041,9 +1074,9 @@ class Fast_iTPN(BaseBackbone):
         return result
 
 
-    def forward_features(self, z, x, l, temporal_query=None, top_K=None):
+    def forward_features(self, z, x, l, temporal_query=None, top_K=None, template_tokens=None):
         B = x.shape[0]
-        z_feat = self._z_feat(z,B)
+        z_feat = self._z_feat(z, B, template_tokens=template_tokens)
         x_feat = self._x_feat(x)
         l_feat = self._l_feat(l)
         fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
@@ -1051,11 +1084,12 @@ class Fast_iTPN(BaseBackbone):
         l2s = self._finder(x_feat,top_index)
         aux_dict = {"attn": attn,
                     "attn_l2s": att_l2s,
+                    "language_cls": l_feat.mean(dim=1),
                     "temproal_token": l2s}
 
         return fusion_feat, aux_dict
 
-    def forward(self, z, x, l, temporal_query, top_K, **kwargs):
+    def forward(self, z, x, l, temporal_query, top_K, template_tokens=None, **kwargs):
         """
         Joint feature extraction and relation modeling for the basic ViT backbone.
         Args:
@@ -1067,7 +1101,7 @@ class Fast_iTPN(BaseBackbone):
             x (torch.Tensor): merged template and search region feature, [B, L_z+L_x, C]
             attn : None
         """
-        x, aux_dict = self.forward_features(z, x, l, temporal_query, top_K)
+        x, aux_dict = self.forward_features(z, x, l, temporal_query, top_K, template_tokens=template_tokens)
 
         return x, aux_dict
 

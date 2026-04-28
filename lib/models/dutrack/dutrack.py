@@ -9,13 +9,14 @@ from torch.nn.modules.transformer import _get_clones
 from lib.models.layers.head import build_box_head
 
 from lib.models.dutrack.itpn import fast_itpn_base_3324_patch16_224
+from lib.models.dutrack.template_prototype import TemplatePrototypeHead
 from lib.utils.box_ops import box_xyxy_to_cxcywh
 
 
 class DUTrack(nn.Module):
     """ This is the base class for MMTrack """
 
-    def __init__(self, transformer, box_head, aux_loss=False, head_type="CORNER", token_len=1):
+    def __init__(self, transformer, box_head, aux_loss=False, head_type="CORNER", token_len=1, template_proto_cfg=None):
         """ Initializes the model.
         Parameters:
             transformer: torch module of the transformer architecture.
@@ -36,16 +37,36 @@ class DUTrack(nn.Module):
 
         self.track_query = None
         self.token_len = token_len
+        self.template_proto_enabled = bool(getattr(template_proto_cfg, "ENABLE", False))
+        self.template_proto_reinject = bool(getattr(template_proto_cfg, "REINJECT", True))
+        self.template_proto_head = None
+        if self.template_proto_enabled:
+            self.template_proto_head = TemplatePrototypeHead(
+                hidden_dim=transformer.embed_dim,
+                keep_topk=int(getattr(template_proto_cfg, "KEEP_TOPK", max(token_len, 1))),
+                split_beta=float(getattr(template_proto_cfg, "SPLIT_BETA", 0.35)),
+            )
 
     def forward(self, template: torch.Tensor,
                 search: torch.Tensor,
                 descript,
+                search_boxes=None,
+                template_tokens=None,
                 ):
         assert isinstance(search, list), "The type of search is not List"
 
         out_dict = []
+        current_template_tokens = template_tokens
         for i in range(len(search)):
-            x, aux_dict = self.backbone(z=template.copy(), x=search[i], l=list(descript[i]), temporal_query=self.track_query, top_K=self.token_len)
+            backbone_template_tokens = current_template_tokens if self.template_proto_reinject else None
+            x, aux_dict = self.backbone(
+                z=template.copy(),
+                x=search[i],
+                l=list(descript[i]),
+                temporal_query=self.track_query,
+                top_K=self.token_len,
+                template_tokens=backbone_template_tokens,
+            )
             feat_last = x
             if isinstance(x, list):
                 feat_last = x[-1]
@@ -60,6 +81,29 @@ class DUTrack(nn.Module):
             
             # Forward head
             out = self.forward_head(opt, None)
+
+            if self.template_proto_enabled and self.template_proto_head is not None:
+                if search_boxes is not None:
+                    box_for_proto = search_boxes[i]
+                else:
+                    box_for_proto = out['pred_boxes'].mean(dim=1).detach()
+                proto_out = self.template_proto_head(
+                    enc_opt,
+                    aux_dict['attn_l2s'],
+                    box_for_proto,
+                    language_cls=aux_dict.get('language_cls', None),
+                )
+                out.update(proto_out)
+                next_recent_tokens = proto_out.get('template_token_feat', None)
+                if self.template_proto_reinject and next_recent_tokens is not None:
+                    if isinstance(current_template_tokens, dict):
+                        current_template_tokens = current_template_tokens.copy()
+                        current_template_tokens['recent'] = next_recent_tokens
+                    else:
+                        # During training, later search steps only have the newly extracted
+                        # token template from the previous step. Treat it as the recent role
+                        # so the backbone uses the same role-aware path as inference.
+                        current_template_tokens = {'recent': next_recent_tokens}
 
             out.update(aux_dict)
             out['backbone_feat'] = x
@@ -133,6 +177,7 @@ def build_dutrack(cfg, training=True):
         aux_loss=False,
         head_type=cfg.MODEL.HEAD.TYPE,
         token_len=cfg.MODEL.BACKBONE.TOP_K,
+        template_proto_cfg=cfg.MODEL.TEMPLATE_PROTO,
     )
     if 'DUTrack' in cfg.MODEL.PRETRAIN_FILE and training:
         current_dir = os.path.dirname(os.path.abspath(__file__))  # This is your Project Root

@@ -69,6 +69,8 @@ class BaseTrainer:
 
         epoch = -1
         num_tries = 1
+        completed_successfully = False
+        crashed = False
         for i in range(num_tries):
             try:
                 if load_latest:
@@ -96,7 +98,9 @@ class BaseTrainer:
                         if self._checkpoint_dir:
                             if self.settings.local_rank in [-1, 0]:
                                 self.save_checkpoint()
+                completed_successfully = self.epoch >= max_epochs
             except:
+                crashed = True
                 print('Training crashed at epoch {}'.format(epoch))
                 if fail_safe:
                     self.epoch -= 1
@@ -107,7 +111,12 @@ class BaseTrainer:
                 else:
                     raise
 
-        print('Finished training!')
+        if completed_successfully:
+            print('Finished training!')
+        elif crashed:
+            print('Training stopped before reaching the target epoch.')
+        else:
+            print('Training exited without completing the requested epochs.')
 
     def train_epoch(self):
         raise NotImplementedError

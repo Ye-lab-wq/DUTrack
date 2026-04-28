@@ -20,7 +20,7 @@ def trackerlist(name: str, parameter_name: str, dataset_name: str, run_ids = Non
         run_ids: A single or list of run_ids.
         display_name: Name to be displayed in the result plots.
     """
-    if run_ids is None or isinstance(run_ids, int):
+    if run_ids is None or isinstance(run_ids, (int, str)):
         run_ids = [run_ids]
     return [Tracker(name, parameter_name, dataset_name, run_id, display_name, result_only) for run_id in run_ids]
 
@@ -50,8 +50,12 @@ class Tracker:
             self.results_dir = '{}/{}/{}'.format(env.results_path, self.name, self.parameter_name)
             self.segmentation_dir = '{}/{}/{}'.format(env.segmentation_path, self.name, self.parameter_name)
         else:
-            self.results_dir = '{}/{}/{}_{:03d}'.format(env.results_path, self.name, self.parameter_name, self.run_id)
-            self.segmentation_dir = '{}/{}/{}_{:03d}'.format(env.segmentation_path, self.name, self.parameter_name, self.run_id)
+            if isinstance(self.run_id, int):
+                run_id_suffix = '{:03d}'.format(self.run_id)
+            else:
+                run_id_suffix = str(self.run_id)
+            self.results_dir = '{}/{}/{}_{}'.format(env.results_path, self.name, self.parameter_name, run_id_suffix)
+            self.segmentation_dir = '{}/{}/{}_{}'.format(env.segmentation_path, self.name, self.parameter_name, run_id_suffix)
 
         if result_only:
             self.results_dir = '{}/{}'.format(env.results_path, self.name)

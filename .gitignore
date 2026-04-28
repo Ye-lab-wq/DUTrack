@@ -1,8 +1,13 @@
 output/
-models/
+/models/
 pretrained_models/
+tensorboard/
+__pycache__/
+*.pyc
 lib/models/__pycache__/
 lib/__pycache__/
 lib/config/__pycache__/
 lib/config/dutrack/__pycache__/
 lib/config/__pycache__/__init__.cpython-38.pyc
+Zhou 等 - 2023 - Joint visual grounding and tracking with natural language specification.pdf
+*.pdf
