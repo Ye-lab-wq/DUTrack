@@ -46,10 +46,11 @@ class DUTrack(nn.Module):
         out_dict = []
         for i in range(len(search)):
             x, aux_dict = self.backbone(z=template.copy(), x=search[i], l=list(descript[i]), temporal_query=self.track_query, top_K=self.token_len)
+            policy_score_feat = aux_dict.pop("policy_score_feat", None)
             feat_last = x
             if isinstance(x, list):
                 feat_last = x[-1]
-                
+
             enc_opt = feat_last[:, -self.feat_len_s:]  # encoder output for the search region (B, HW, C)
 
             if self.backbone.add_cls_token:
@@ -57,9 +58,16 @@ class DUTrack(nn.Module):
 
             att = torch.matmul(enc_opt, x[:, :1].transpose(1, 2))  # (B, HW, N)
             opt = (enc_opt.unsqueeze(-1) * att.unsqueeze(-2)).permute((0, 3, 2, 1)).contiguous()  # (B, HW, C, N) --> (B, N, C, HW)
-            
+
+            score_opt = None
+            if policy_score_feat is not None:
+                score_feat_last = policy_score_feat[-1] if isinstance(policy_score_feat, list) else policy_score_feat
+                score_enc_opt = score_feat_last[:, -self.feat_len_s:]
+                score_att = torch.matmul(score_enc_opt, score_feat_last[:, :1].transpose(1, 2))
+                score_opt = (score_enc_opt.unsqueeze(-1) * score_att.unsqueeze(-2)).permute((0, 3, 2, 1)).contiguous()
+
             # Forward head
-            out = self.forward_head(opt, None)
+            out = self.forward_head(opt, None, score_opt=score_opt)
 
             out.update(aux_dict)
             out['backbone_feat'] = x
@@ -68,7 +76,7 @@ class DUTrack(nn.Module):
             
         return out_dict
 
-    def forward_head(self, opt, gt_score_map=None):
+    def forward_head(self, opt, gt_score_map=None, score_opt=None):
         """
         enc_opt: output embeddings of the backbone, it can be (HW1+HW2, B, C) or (HW2, B, C)
         """
@@ -88,8 +96,17 @@ class DUTrack(nn.Module):
 
         elif self.head_type == "CENTER":
             # run the center head
-            score_map_ctr, bbox, size_map, offset_map = self.box_head(opt_feat, gt_score_map)
-            
+            if score_opt is None:
+                score_map_ctr, bbox, size_map, offset_map = self.box_head(opt_feat, gt_score_map)
+            else:
+                score_feat = score_opt.view(-1, C, self.feat_sz_s, self.feat_sz_s)
+                score_map_ctr, _, _ = self.box_head.get_score_map(score_feat)
+                _, size_map, offset_map = self.box_head.get_score_map(opt_feat)
+                if gt_score_map is None:
+                    bbox = self.box_head.cal_bbox(score_map_ctr, size_map, offset_map)
+                else:
+                    bbox = self.box_head.cal_bbox(gt_score_map.unsqueeze(1), size_map, offset_map)
+
             # outputs_coord = box_xyxy_to_cxcywh(bbox)
             outputs_coord = bbox
             outputs_coord_new = outputs_coord.view(bs, Nq, 4)

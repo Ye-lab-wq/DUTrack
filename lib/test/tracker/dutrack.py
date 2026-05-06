@@ -15,7 +15,7 @@ from lib.test.tracker.data_utils import Preprocessor
 from lib.utils.box_ops import clip_box
 from lib.utils.ce_utils import generate_mask_cond
 from lib.models.dutrack.i2d import descriptgenRefiner
-from tracking.draw_heatmap import visualize_attn
+from tracking.draw_heatmap import visualize_attn, visualize_cls_l2s_with_context, visualize_language_token_weights
 
 
 class DUTrack(BaseTracker):
@@ -49,14 +49,20 @@ class DUTrack(BaseTracker):
         self.save_all_boxes = params.save_all_boxes
         self.z_dict1 = {}
         self.descriptgenRefiner = descriptgenRefiner(params.cfg.MODEL.BACKBONE.BLIP_DIR,params.cfg.MODEL.BACKBONE.BERT_DIR)
+        self.vlte_vis_interval = 20
+
+    def _initial_description(self, image, info):
+        text_description = info.get('init_text_description') or info.get('text_description')
+        if text_description is not None and str(text_description).strip():
+            return str(text_description).strip()
+        return self.descriptgenRefiner(image, cls=info.get('class'))
 
     def initialize(self, image, info: dict):
         # forward the template once
         z_patch_arr, resize_factor, z_amask_arr = sample_target(image, info['init_bbox'], self.params.template_factor,
                                                     output_sz=self.params.template_size)
 
-        #update descript
-        self.descript = self.descriptgenRefiner(image,cls=info['class'])
+        self.descript = self._initial_description(image, info)
         self.his_state = info['init_bbox']
         self.updata_key = False
 
@@ -117,14 +123,67 @@ class DUTrack(BaseTracker):
             return True
         return False
 
+    def _search_crop_box(self, target_box, resize_factor):
+        crop_sz = self.params.search_size / resize_factor
+        x, y, w, h = [float(v) for v in target_box]
+        return [x + 0.5 * w - 0.5 * crop_sz, y + 0.5 * h - 0.5 * crop_sz, crop_sz, crop_sz]
+
+    def _maybe_save_vlte_vis(self, out_dict, search_img, orig_img, info, prev_state, pred_state, resize_factor):
+        if self.debug < 2:
+            return
+        if self.frame_id > 5 and self.frame_id % self.vlte_vis_interval != 0:
+            return
+
+        seq_name = str(info.get('path', 'sequence')) if info is not None else 'sequence'
+        config_name = os.path.basename(os.path.dirname(self.params.checkpoint))
+        save_dir = os.path.join('output', 'test', 'vis_vlte', config_name, seq_name)
+        crop_box = self._search_crop_box(prev_state, resize_factor)
+        status = [
+            'frame: {}'.format(self.frame_id),
+            'prev: [{:.1f}, {:.1f}, {:.1f}, {:.1f}]'.format(*prev_state),
+            'pred: [{:.1f}, {:.1f}, {:.1f}, {:.1f}]'.format(*pred_state),
+        ]
+
+        if 'vl_score_x' in out_dict:
+            vl_score = out_dict['vl_score_x'][0].detach().float().cpu()
+            save_path = os.path.join(save_dir, '{:04d}_vl_score_x.jpg'.format(self.frame_id))
+            visualize_cls_l2s_with_context(vl_score, search_img, orig_img, save_path,
+                                           search_crop_box=crop_box, ref_box=prev_state, pred_box=pred_state,
+                                           description=self.descript, status_lines=status,
+                                           title='VL score x')
+
+        if 'attn_l2s' in out_dict:
+            attn_l2s = out_dict['attn_l2s'][0].detach().float().cpu()
+            save_path = os.path.join(save_dir, '{:04d}_attn_l2s.jpg'.format(self.frame_id))
+            visualize_cls_l2s_with_context(attn_l2s, search_img, orig_img, save_path,
+                                           search_crop_box=crop_box, ref_box=prev_state, pred_box=pred_state,
+                                           description=self.descript, status_lines=status,
+                                           title='Temporal/query attention to search')
+
+        if 'score_map' in out_dict:
+            score_map = out_dict['score_map'][0].detach().float().cpu().view(-1)
+            save_path = os.path.join(save_dir, '{:04d}_score_map.jpg'.format(self.frame_id))
+            visualize_cls_l2s_with_context(score_map, search_img, orig_img, save_path,
+                                           search_crop_box=crop_box, ref_box=prev_state, pred_box=pred_state,
+                                           description=self.descript, status_lines=status,
+                                           title='Box score map')
+
+        if 'language_token_weights' in out_dict and 'language_tokens' in out_dict:
+            token_weights = out_dict['language_token_weights'][0].detach().float().cpu()
+            tokens = out_dict['language_tokens'][0]
+            save_path = os.path.join(save_dir, '{:04d}_language_tokens.jpg'.format(self.frame_id))
+            visualize_language_token_weights(tokens, token_weights, save_path,
+                                             description=self.descript, status_lines=status,
+                                             title='Visual-guided language token weights')
+
     def track(self, image, info: dict = None):
         H, W, _ = image.shape
         self.frame_id += 1
+        prev_state = list(self.state)
         x_patch_arr, resize_factor, x_amask_arr = sample_target(image, self.state, self.params.search_factor,
                                                                 output_sz=self.params.search_size)  # (x1, y1, w, h)
         search = self.preprocessor.process(x_patch_arr, x_amask_arr)
         if self.updata_key:
-            self.descript = self.descriptgenRefiner(image,cls=info['class'])
             self.his_state = self.state
 
         # print(info['num'])
@@ -156,6 +215,7 @@ class DUTrack(BaseTracker):
         pred_box = (pred_boxes.mean(dim=0) * self.params.search_size / resize_factor).tolist()  # (cx, cy, w, h) [0,1]
         # get the final box result
         self.state = clip_box(self.map_box_back(pred_box, resize_factor), H, W, margin=10)
+        self._maybe_save_vlte_vis(out_dict, x_patch_arr, image, info, prev_state, self.state, resize_factor)
 
         self.updata_key = self.ifupdata(self.his_state,self.state,H,W)
 

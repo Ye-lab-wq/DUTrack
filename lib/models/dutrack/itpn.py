@@ -28,6 +28,7 @@ from transformers import BertTokenizer
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from lib.models.dutrack import utils as utils
 from lib.models.dutrack.utils import combine_tokens, recover_tokens
+from lib.models.dutrack.language_conditioned_token_score import LanguageConditionedTokenScore
 
 def _cfg(url='', **kwargs):
     return {
@@ -234,7 +235,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
         B, N, C = x.shape
 
         if self.deepnorm or self.subln:
@@ -276,6 +277,11 @@ class Attention(nn.Module):
             attn_mask = attn_mask.bool()
             attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
         attn = attn.softmax(dim=-1).type_as(x)
+        if policy is not None:
+            if policy.dim() == 3:
+                policy = policy.squeeze(-1)
+            policy = policy.to(dtype=attn.dtype, device=attn.device)
+            attn = (attn + attn * policy[:, None, None, :]) * 0.5
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
@@ -347,18 +353,19 @@ class Block(nn.Module):
 
         self.postnorm = postnorm
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
+        attn = None
         if self.gamma_2 is None:
             if self.postnorm:
                 if self.attn is not None:
-                    x = x + self.drop_path(
-                        self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    x = x + self.drop_path(self.norm1(feat))
                 x = x + self.drop_path(self.norm2(self.mlp(x)))
             elif self.deepnorm:
                 if self.attn is not None:
                     residual = x
-                    x = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
-                    x = self.drop_path(x)
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    x = self.drop_path(feat)
                     x = residual * self.alpha + x
                     x = self.norm1(x)
 
@@ -369,18 +376,18 @@ class Block(nn.Module):
                 x = self.norm2(x)
             else:
                 if self.attn is not None:
-                    x = x + self.drop_path(
-                        self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
+                    feat, attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    x = x + self.drop_path(feat)
                 x = x + self.drop_path(self.mlp(self.norm2(x)))
         else:
             if self.postnorm:
                 if self.attn is not None:
-                    x = x + self.drop_path(
-                        self.gamma_1 * self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    x = x + self.drop_path(self.gamma_1 * self.norm1(feat))
                 x = x + self.drop_path(self.gamma_2 * self.norm2(self.mlp(x)))
             else:
                 if self.attn is not None:
-                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = x + self.drop_path(self.gamma_1 * feat)
                     # x = x + self.drop_path(
                     #     self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
@@ -715,6 +722,10 @@ class Fast_iTPN(BaseBackbone):
         self.use_shared_decoupled_rel_pos_bias = use_shared_decoupled_rel_pos_bias
         self.use_decoupled_rel_pos_bias = False
         self.tokenizer = BertTokenizer.from_pretrained(bert_dir)
+        self.vlte = None
+        self.vlte_enabled = False
+        self.vlte_attn_reweight = False
+        self.vlte_reweight_alpha = 0.1
         bert_config = BertConfig(
             vocab_size=30522,
             hidden_size=512,
@@ -955,6 +966,41 @@ class Fast_iTPN(BaseBackbone):
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
+    def finetune_track(self, cfg, patch_start_index=1):
+        super().finetune_track(cfg, patch_start_index=patch_start_index)
+
+        vlte_cfg = getattr(cfg.MODEL, "VLTE", None)
+        self.vlte_enabled = bool(vlte_cfg is not None and getattr(vlte_cfg, "ENABLE", False))
+        self.vlte_attn_reweight = bool(vlte_cfg is not None and getattr(vlte_cfg, "ATTN_REWEIGHT", False))
+        self.vlte_reweight_alpha = float(getattr(vlte_cfg, "REWEIGHT_ALPHA", 0.1)) if vlte_cfg is not None else 0.1
+        self.vlte_detach_visual = bool(vlte_cfg is not None and getattr(vlte_cfg, "DETACH_VISUAL", False))
+        self.vlte_attn_policy = bool(vlte_cfg is not None and getattr(vlte_cfg, "ATTN_POLICY", False))
+        self.vlte_policy_alpha = float(getattr(vlte_cfg, "POLICY_ALPHA", 0.02)) if vlte_cfg is not None else 0.02
+        self.vlte_policy_target = getattr(vlte_cfg, "POLICY_TARGET", "search") if vlte_cfg is not None else "search"
+        self.vlte_policy_head_score_only = bool(vlte_cfg is not None and getattr(vlte_cfg, "POLICY_HEAD_SCORE_ONLY", False))
+        self.vlte_policy_num_blocks = int(getattr(vlte_cfg, "POLICY_NUM_BLOCKS", 0)) if vlte_cfg is not None else 0
+        self.vlte_policy_normalize = bool(vlte_cfg is not None and getattr(vlte_cfg, "POLICY_NORMALIZE", False))
+        self.vlte_policy_mode = getattr(vlte_cfg, "POLICY_MODE", "score") if vlte_cfg is not None else "score"
+        self.vlte_policy_top_ratio = float(getattr(vlte_cfg, "POLICY_TOP_RATIO", 0.2)) if vlte_cfg is not None else 0.2
+        self.vlte_policy_neg_alpha = float(getattr(vlte_cfg, "POLICY_NEG_ALPHA", 0.005)) if vlte_cfg is not None else 0.005
+
+        if self.vlte_enabled:
+            hidden_dim = int(getattr(vlte_cfg, "HIDDEN_DIM", 256))
+            lang_pool = getattr(vlte_cfg, "LANG_POOL", "cls")
+            lang_refine = bool(getattr(vlte_cfg, "LANG_REFINE", False))
+            lang_refine_alpha = float(getattr(vlte_cfg, "LANG_REFINE_ALPHA", 0.5))
+            lang_refine_temp = float(getattr(vlte_cfg, "LANG_REFINE_TEMP", 1.0))
+            lang_refine_mode = getattr(vlte_cfg, "LANG_REFINE_MODE", "visual_soft")
+            lang_residual_beta = float(getattr(vlte_cfg, "LANG_RESIDUAL_BETA", 0.1))
+            lang_subject_hard = bool(getattr(vlte_cfg, "LANG_SUBJECT_HARD", True))
+            self.vlte = LanguageConditionedTokenScore(self.embed_dim, hidden_dim=hidden_dim, lang_pool=lang_pool,
+                                                      lang_refine=lang_refine,
+                                                      lang_refine_alpha=lang_refine_alpha,
+                                                      lang_refine_temp=lang_refine_temp,
+                                                      lang_refine_mode=lang_refine_mode,
+                                                      lang_residual_beta=lang_residual_beta,
+                                                      lang_subject_hard=lang_subject_hard)
+
     def _z_feat(self,z,B):
         z = torch.stack(z, dim=1)
         _, T_z, C_z, H_z, W_z = z.shape
@@ -973,7 +1019,7 @@ class Fast_iTPN(BaseBackbone):
             z = z.view(B, T_z, -1, z.size()[-1]).contiguous()
             z = z.flatten(1, 2)
 
-        return z
+        return z, T_z
 
     def _x_feat(self,x):
         x = self.patch_embed(x)
@@ -989,15 +1035,57 @@ class Fast_iTPN(BaseBackbone):
 
         return x
 
-    def _l_feat(self,l):
-        descript_id = self.tokenizer(l, add_special_tokens=True, truncation=True,pad_to_max_length=True, max_length=16)['input_ids']
-        descript_id_tensor = torch.tensor(descript_id)
-        l = self.descript_embedding(descript_id_tensor.to('cuda'))
+    def _l_feat(self,l,device):
+        descript = self.tokenizer(l, add_special_tokens=True, truncation=True, pad_to_max_length=True,
+                                  max_length=16, return_attention_mask=True)
+        descript_id_tensor = torch.tensor(descript['input_ids'])
+        descript_mask = torch.tensor(descript['attention_mask'], device=device).bool()
+        l = self.descript_embedding(descript_id_tensor.to(device))
         l += self.description_patch_pos_embed(l)
+        descript_tokens = [self.tokenizer.convert_ids_to_tokens(ids) for ids in descript['input_ids']]
 
-        return l
+        return l, descript_mask, descript_tokens
 
-    def _fusion_feat(self,z,x,l,B,temporal_query):
+    def _apply_vlte_reweight(self, z, x, vlte_out):
+        if not self.vlte_attn_reweight:
+            return z, x
+
+        alpha = self.vlte_reweight_alpha
+        z_score = vlte_out["vl_score_z"].flatten(1).unsqueeze(-1)
+        x_score = vlte_out["vl_score_x"].unsqueeze(-1)
+        z = z * (1.0 + alpha * (z_score - 0.5))
+        x = x * (1.0 + alpha * (x_score - 0.5))
+        return z, x
+
+    def _build_vlte_policy(self, l_feat, z_feat, x_feat, vlte_out):
+        if not self.vlte_attn_policy:
+            return None
+        if "vl_score_x" not in vlte_out:
+            return None
+        if self.vlte_policy_target != "search":
+            raise ValueError("Unsupported VLTE policy target: {}".format(self.vlte_policy_target))
+
+        batch_size = x_feat.shape[0]
+        prefix_len = l_feat.shape[1] + z_feat.shape[1]
+        if self.add_cls_token:
+            prefix_len += 1
+        prefix_policy = torch.ones(batch_size, prefix_len, device=x_feat.device, dtype=x_feat.dtype)
+        x_score = vlte_out["vl_score_x"].to(dtype=x_feat.dtype, device=x_feat.device)
+        if self.vlte_policy_mode == "top_percent":
+            top_ratio = min(max(self.vlte_policy_top_ratio, 1.0 / max(x_score.shape[1], 1)), 1.0)
+            top_k = max(1, int(round(x_score.shape[1] * top_ratio)))
+            threshold = torch.topk(x_score, top_k, dim=1).values[:, -1:].detach()
+            top_mask = (x_score >= threshold).to(dtype=x_feat.dtype)
+            search_policy = 1.0 + self.vlte_policy_alpha * top_mask - self.vlte_policy_neg_alpha * (1.0 - top_mask)
+        elif self.vlte_policy_mode == "score":
+            search_policy = 1.0 + self.vlte_policy_alpha * (x_score - 0.5)
+        else:
+            raise ValueError("Unsupported VLTE policy mode: {}".format(self.vlte_policy_mode))
+        if self.vlte_policy_normalize:
+            search_policy = search_policy / search_policy.mean(dim=1, keepdim=True).clamp_min(1e-6)
+        return torch.cat([prefix_policy, search_policy], dim=1)
+
+    def _fusion_feat(self,z,x,l,B,temporal_query, policy=None):
         if self.add_cls_token:
             temporal_init = self.temporal_token.expand(B, 1, -1)
             temporal_init = temporal_init + self.temporal_pos_embed
@@ -1012,13 +1100,26 @@ class Fast_iTPN(BaseBackbone):
             else:
                 x = torch.cat([temporal_query, x], dim=1)
 
+        if policy is not None and policy.shape[1] != x.shape[1]:
+            prefix_delta = x.shape[1] - policy.shape[1]
+            if prefix_delta < 0:
+                raise ValueError("VLTE policy is longer than token sequence: {} > {}".format(policy.shape[1], x.shape[1]))
+            extra_policy = torch.ones(policy.shape[0], prefix_delta, device=policy.device, dtype=policy.dtype)
+            policy = torch.cat([extra_policy, policy], dim=1)
+
         x = self.pos_drop(x)
 
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None
         assert rel_pos_bias == None, 'rel_pos_bias not None'
         assert self.grad_ckpt == False, 'grad_ckpt != Fasle'
-        for blk in self.blocks[-self.num_main_blocks:]:
-            x,attn = blk(x)
+        main_blocks = self.blocks[-self.num_main_blocks:]
+        if self.vlte_policy_num_blocks > 0:
+            policy_start = max(0, len(main_blocks) - self.vlte_policy_num_blocks)
+        else:
+            policy_start = 0
+        for block_idx, blk in enumerate(main_blocks):
+            block_policy = policy if policy is not None and block_idx >= policy_start else None
+            x,attn = blk(x, policy=block_policy)
 
         x = self.norm(x)
 
@@ -1043,15 +1144,31 @@ class Fast_iTPN(BaseBackbone):
 
     def forward_features(self, z, x, l, temporal_query=None, top_K=None):
         B = x.shape[0]
-        z_feat = self._z_feat(z,B)
+        z_feat, num_templates = self._z_feat(z,B)
         x_feat = self._x_feat(x)
-        l_feat = self._l_feat(l)
-        fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
+        l_feat, l_mask, l_tokens = self._l_feat(l, x.device)
+        vlte_out = {}
+        if self.vlte_enabled and self.vlte is not None:
+            vlte_z_feat = z_feat.detach() if self.vlte_detach_visual else z_feat
+            vlte_x_feat = x_feat.detach() if self.vlte_detach_visual else x_feat
+            vlte_out = self.vlte(vlte_z_feat, vlte_x_feat, l_feat, num_templates=num_templates, lang_mask=l_mask)
+            z_feat, x_feat = self._apply_vlte_reweight(z_feat, x_feat, vlte_out)
+        policy = self._build_vlte_policy(l_feat, z_feat, x_feat, vlte_out)
+        policy_score_feat = None
+        if policy is not None and self.vlte_policy_head_score_only:
+            fusion_feat, _ = self._fusion_feat(z_feat, x_feat, l_feat, B, temporal_query, policy=None)
+            policy_score_feat, attn = self._fusion_feat(z_feat, x_feat, l_feat, B, temporal_query, policy=policy)
+        else:
+            fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query, policy=policy)  #attn(bs,head_num,l,l)
         top_index,att_l2s = self._split_feat(attn,top_K)
         l2s = self._finder(x_feat,top_index)
         aux_dict = {"attn": attn,
                     "attn_l2s": att_l2s,
-                    "temproal_token": l2s}
+                    "temproal_token": l2s,
+                    "language_tokens": l_tokens}
+        if policy_score_feat is not None:
+            aux_dict["policy_score_feat"] = policy_score_feat
+        aux_dict.update(vlte_out)
 
         return fusion_feat, aux_dict
 

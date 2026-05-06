@@ -1,6 +1,11 @@
 output/
-models/
+/models/
 pretrained_models/
+tensorboard/
+*.pdf
+events.out.tfevents*
+__pycache__/
+*.py[cod]
 lib/models/__pycache__/
 lib/__pycache__/
 lib/config/__pycache__/

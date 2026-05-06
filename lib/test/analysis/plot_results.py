@@ -1,4 +1,7 @@
-import tikzplotlib
+try:
+    import tikzplotlib
+except ImportError:
+    tikzplotlib = None
 import matplotlib
 import matplotlib.pyplot as plt
 import os
@@ -7,6 +10,26 @@ import pickle
 import json
 from lib.test.evaluation.environment import env_settings
 from lib.test.analysis.extract_results import extract_results
+
+
+def _sanitize_report_name(report_name):
+    return ''.join(c if c.isalnum() or c in ('-', '_', '.') else '_' for c in report_name)
+
+
+def _get_result_plot_path(settings, dataset, report_name):
+    if len(dataset) > 0 and hasattr(dataset[0], 'dataset'):
+        dataset_name = dataset[0].dataset
+    else:
+        dataset_name = _sanitize_report_name(report_name)
+    result_plot_path = os.path.join(settings.result_plot_path, dataset_name)
+    os.makedirs(result_plot_path, exist_ok=True)
+    return result_plot_path
+
+
+def _get_eval_data_path(settings, dataset, report_name):
+    result_plot_path = _get_result_plot_path(settings, dataset, report_name)
+    safe_report_name = _sanitize_report_name(report_name)
+    return result_plot_path, os.path.join(result_plot_path, 'eval_data_{}.pkl'.format(safe_report_name))
 
 
 def get_plot_draw_styles():
@@ -99,7 +122,7 @@ def get_tracker_display_name(tracker):
     return  disp_name
 
 
-def plot_draw_save(y, x, scores, trackers, plot_draw_styles, result_plot_path, plot_opts):
+def plot_draw_save(y, x, scores, trackers, plot_draw_styles, result_plot_path, plot_opts, report_name=None):
     plt.rcParams['text.usetex']=True
     plt.rcParams["font.family"] = "Times New Roman"
     # Plot settings
@@ -162,18 +185,16 @@ def plot_draw_save(y, x, scores, trackers, plot_draw_styles, result_plot_path, p
     ax.grid(True, linestyle='-.')
     fig.tight_layout()
 
-    # tikzplotlib.save('{}/{}_plot.tex'.format(result_plot_path, plot_type))
-    fig.savefig('{}/{}_plot.pdf'.format(result_plot_path, plot_type), dpi=300, format='pdf', transparent=True)
+    dataset_name = os.path.basename(os.path.normpath(result_plot_path))
+    file_name = '{}_{}_plot.pdf'.format(dataset_name, plot_type)
+    fig.savefig(os.path.join(result_plot_path, file_name), dpi=300, format='pdf', transparent=True)
     plt.draw()
-
-
 def check_and_load_precomputed_results(trackers, dataset, report_name, force_evaluation=False, **kwargs):
     # Load data
     settings = env_settings()
 
     # Load pre-computed results
-    result_plot_path = os.path.join(settings.result_plot_path, report_name)
-    eval_data_path = os.path.join(result_plot_path, 'eval_data.pkl')
+    result_plot_path, eval_data_path = _get_eval_data_path(settings, dataset, report_name)
 
     if os.path.isfile(eval_data_path) and not force_evaluation:
         with open(eval_data_path, 'rb') as fh:
@@ -231,7 +252,7 @@ def plot_results(trackers, dataset, report_name, merge_results=False,
     plot_draw_styles = get_plot_draw_styles()
 
     # Load pre-computed results
-    result_plot_path = os.path.join(settings.result_plot_path, report_name)
+    result_plot_path = _get_result_plot_path(settings, dataset, report_name)
     eval_data = check_and_load_precomputed_results(trackers, dataset, report_name, force_evaluation, **kwargs)
 
     # Merge results from multiple runs
@@ -256,7 +277,8 @@ def plot_results(trackers, dataset, report_name, merge_results=False,
 
         success_plot_opts = {'plot_type': 'success', 'legend_loc': 'lower left', 'xlabel': 'Overlap threshold',
                              'ylabel': 'Overlap Precision [%]', 'xlim': (0, 1.0), 'ylim': (0, 88), 'title': 'Success'}
-        plot_draw_save(auc_curve, threshold_set_overlap, auc, tracker_names, plot_draw_styles, result_plot_path, success_plot_opts)
+        plot_draw_save(auc_curve, threshold_set_overlap, auc, tracker_names, plot_draw_styles, result_plot_path,
+                       success_plot_opts, report_name=report_name)
 
     # ********************************  Precision Plot **************************************
     if 'prec' in plot_types:
@@ -270,7 +292,7 @@ def plot_results(trackers, dataset, report_name, merge_results=False,
                                'xlabel': 'Location error threshold [pixels]', 'ylabel': 'Distance Precision [%]',
                                'xlim': (0, 50), 'ylim': (0, 100), 'title': 'Precision plot'}
         plot_draw_save(prec_curve, threshold_set_center, prec_score, tracker_names, plot_draw_styles, result_plot_path,
-                       precision_plot_opts)
+                       precision_plot_opts, report_name=report_name)
 
     # ********************************  Norm Precision Plot **************************************
     if 'norm_prec' in plot_types:
@@ -284,7 +306,7 @@ def plot_results(trackers, dataset, report_name, merge_results=False,
                                     'xlabel': 'Location error threshold', 'ylabel': 'Distance Precision [%]',
                                     'xlim': (0, 0.5), 'ylim': (0, 85), 'title': 'Normalized Precision'}
         plot_draw_save(prec_curve, threshold_set_center_norm, prec_score, tracker_names, plot_draw_styles, result_plot_path,
-                       norm_precision_plot_opts)
+                       norm_precision_plot_opts, report_name=report_name)
 
     plt.show()
 
