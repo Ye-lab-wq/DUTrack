@@ -28,6 +28,7 @@ from transformers import BertTokenizer
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from lib.models.dutrack import utils as utils
 from lib.models.dutrack.utils import combine_tokens, recover_tokens
+from lib.models.dutrack.visual_token_emphasizer import VisualTokenEmphasizer
 
 def _cfg(url='', **kwargs):
     return {
@@ -234,7 +235,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
         B, N, C = x.shape
 
         if self.deepnorm or self.subln:
@@ -276,6 +277,11 @@ class Attention(nn.Module):
             attn_mask = attn_mask.bool()
             attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
         attn = attn.softmax(dim=-1).type_as(x)
+        if policy is not None:
+            if policy.dim() == 3:
+                policy = policy.squeeze(-1)
+            policy = policy.to(dtype=attn.dtype, device=attn.device)
+            attn = (attn + attn * policy[:, None, None, :]) * 0.5
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
@@ -347,17 +353,19 @@ class Block(nn.Module):
 
         self.postnorm = postnorm
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
+        attn = None
         if self.gamma_2 is None:
             if self.postnorm:
                 if self.attn is not None:
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = x + self.drop_path(
-                        self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
+                        self.norm1(feat))
                 x = x + self.drop_path(self.norm2(self.mlp(x)))
             elif self.deepnorm:
                 if self.attn is not None:
                     residual = x
-                    x = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    x, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = self.drop_path(x)
                     x = residual * self.alpha + x
                     x = self.norm1(x)
@@ -369,18 +377,20 @@ class Block(nn.Module):
                 x = self.norm2(x)
             else:
                 if self.attn is not None:
+                    feat, attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = x + self.drop_path(
-                        self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
+                        feat)
                 x = x + self.drop_path(self.mlp(self.norm2(x)))
         else:
             if self.postnorm:
                 if self.attn is not None:
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = x + self.drop_path(
-                        self.gamma_1 * self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
+                        self.gamma_1 * self.norm1(feat))
                 x = x + self.drop_path(self.gamma_2 * self.norm2(self.mlp(x)))
             else:
                 if self.attn is not None:
-                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)
+                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
                     x = x + self.drop_path(self.gamma_1 * feat)
                     # x = x + self.drop_path(
                     #     self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
@@ -955,6 +965,24 @@ class Fast_iTPN(BaseBackbone):
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
+    def finetune_track(self, cfg, patch_start_index=1):
+        super().finetune_track(cfg, patch_start_index=patch_start_index)
+
+        te_cfg = getattr(cfg.MODEL, "TE", None)
+        self.visual_te_enabled = bool(te_cfg is not None and getattr(te_cfg, "ENABLE", False))
+        self.visual_te_pruning_loc = list(getattr(te_cfg, "PRUNING_LOC", [3, 7, 11])) if te_cfg is not None else []
+        self.visual_te_hard = bool(getattr(te_cfg, "HARD", False)) if te_cfg is not None else False
+        self.visual_te_tau = float(getattr(te_cfg, "TAU", 1.0)) if te_cfg is not None else 1.0
+        self.visual_te_predictors = nn.ModuleList()
+        if self.visual_te_enabled:
+            if self.cat_mode != "direct":
+                raise ValueError("Visual TE currently requires direct token concatenation")
+            for _ in self.visual_te_pruning_loc:
+                self.visual_te_predictors.append(
+                    VisualTokenEmphasizer(self.embed_dim, num_heads=self.blocks[-1].attn.num_heads,
+                                          hard=self.visual_te_hard, tau=self.visual_te_tau)
+                )
+
     def _z_feat(self,z,B):
         z = torch.stack(z, dim=1)
         _, T_z, C_z, H_z, W_z = z.shape
@@ -991,17 +1019,25 @@ class Fast_iTPN(BaseBackbone):
 
     def _l_feat(self,l):
         descript_id = self.tokenizer(l, add_special_tokens=True, truncation=True,pad_to_max_length=True, max_length=16)['input_ids']
-        descript_id_tensor = torch.tensor(descript_id)
-        l = self.descript_embedding(descript_id_tensor.to('cuda'))
+        descript_id_tensor = torch.tensor(descript_id, device=self.pos_embed_x.device)
+        l = self.descript_embedding(descript_id_tensor)
         l += self.description_patch_pos_embed(l)
 
         return l
 
     def _fusion_feat(self,z,x,l,B,temporal_query):
+        temporal_len = 0
         if self.add_cls_token:
-            temporal_init = self.temporal_token.expand(B, 1, -1)
-            temporal_init = temporal_init + self.temporal_pos_embed
+            if temporal_query is None:
+                temporal_init = self.temporal_token.expand(B, 1, -1)
+                temporal_init = temporal_init + self.temporal_pos_embed
+                temporal_len = temporal_init.shape[1]
+            else:
+                temporal_len = temporal_query.shape[1]
 
+        z_len = z.shape[1]
+        x_len = x.shape[1]
+        l_len = l.shape[1]
 
         x = combine_tokens(z, x, mode=self.cat_mode)
         x = combine_tokens(l, x, mode=self.cat_mode)
@@ -1017,12 +1053,47 @@ class Fast_iTPN(BaseBackbone):
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None
         assert rel_pos_bias == None, 'rel_pos_bias not None'
         assert self.grad_ckpt == False, 'grad_ckpt != Fasle'
-        for blk in self.blocks[-self.num_main_blocks:]:
-            x,attn = blk(x)
+        prefix_len = l_len + temporal_len
+        z_start = prefix_len
+        x_start = z_start + z_len
+        prev_decision_z = None
+        prev_decision_x = None
+        te_predictor_idx = 0
+        te_policy = None
+        te_aux = {}
+        if self.visual_te_enabled:
+            prev_decision_z = torch.ones(B, z_len, 1, dtype=x.dtype, device=x.device)
+            prev_decision_x = torch.ones(B, x_len, 1, dtype=x.dtype, device=x.device)
+            te_aux = {
+                "visual_te_template_decisions": [],
+                "visual_te_search_decisions": [],
+                "visual_te_template_probs": [],
+                "visual_te_search_probs": [],
+            }
+        for block_idx, blk in enumerate(self.blocks[-self.num_main_blocks:]):
+            if self.visual_te_enabled and block_idx in self.visual_te_pruning_loc:
+                if te_predictor_idx >= len(self.visual_te_predictors):
+                    raise ValueError("Not enough Visual TE predictors for pruning locations")
+                te_predictor = self.visual_te_predictors[te_predictor_idx]
+                z_tokens = x[:, z_start:z_start + z_len, :]
+                x_tokens = x[:, x_start:x_start + x_len, :]
+                _, z_prob, prev_decision_z = te_predictor(z_tokens, prev_decision_z)
+                _, x_prob, prev_decision_x = te_predictor(x_tokens, prev_decision_x)
+                prefix_policy = torch.ones(B, prefix_len, 1, dtype=x.dtype, device=x.device)
+                te_policy = torch.cat([prefix_policy, prev_decision_z, prev_decision_x], dim=1)
+                te_aux["visual_te_template_decisions"].append(prev_decision_z.detach())
+                te_aux["visual_te_search_decisions"].append(prev_decision_x.detach())
+                te_aux["visual_te_template_probs"].append(z_prob.detach())
+                te_aux["visual_te_search_probs"].append(x_prob.detach())
+                te_predictor_idx += 1
+            x,attn = blk(x, policy=te_policy)
 
         x = self.norm(x)
+        if self.visual_te_enabled and prev_decision_z is not None:
+            te_aux["visual_te_template_quality"] = prev_decision_z.sum(dim=1).squeeze(-1).detach()
+            te_aux["visual_te_search_quality"] = prev_decision_x.sum(dim=1).squeeze(-1).detach()
 
-        return x,attn
+        return x,attn,te_aux
 
     def _split_feat(self,attn,topk):
         #fusion_feat(bs,temporal_l + descript_l + z_l + x_l)
@@ -1046,12 +1117,17 @@ class Fast_iTPN(BaseBackbone):
         z_feat = self._z_feat(z,B)
         x_feat = self._x_feat(x)
         l_feat = self._l_feat(l)
-        fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
+        fusion_feat,attn,te_aux = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
         top_index,att_l2s = self._split_feat(attn,top_K)
         l2s = self._finder(x_feat,top_index)
+        if self.training:
+            attn = attn.detach()
+            att_l2s = att_l2s.detach()
+            l2s = l2s.detach()
         aux_dict = {"attn": attn,
                     "attn_l2s": att_l2s,
                     "temproal_token": l2s}
+        aux_dict.update(te_aux)
 
         return fusion_feat, aux_dict
 

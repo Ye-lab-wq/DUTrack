@@ -71,6 +71,10 @@ class LTRTrainer(BaseTrainer):
 
         self._init_timing()
 
+        grad_accum_steps = max(1, int(getattr(self.settings, "grad_accum_steps", 1)))
+        if loader.training:
+            self.optimizer.zero_grad()
+
         for i, data in enumerate(loader, 1):
             self.data_read_done_time = time.time()
             # get inputs
@@ -90,19 +94,25 @@ class LTRTrainer(BaseTrainer):
 
             # backward pass and update weights
             if loader.training:
-                self.optimizer.zero_grad()
+                loss_for_backward = loss / grad_accum_steps
                 if not self.use_amp:
-                    loss.backward()
-                    if self.settings.grad_clip_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
-                    self.optimizer.step()
+                    loss_for_backward.backward()
                 else:
-                    self.scaler.scale(loss).backward()
-                    if self.settings.grad_clip_norm > 0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    self.scaler.scale(loss_for_backward).backward()
+
+                do_step = i % grad_accum_steps == 0 or i == len(loader)
+                if do_step:
+                    if not self.use_amp:
+                        if self.settings.grad_clip_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
+                        self.optimizer.step()
+                    else:
+                        if self.settings.grad_clip_norm > 0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    self.optimizer.zero_grad()
 
             # update statistics
             batch_size = data['template_images'].shape[loader.stack_dim]

@@ -14,10 +14,14 @@ report_name = f'{dataset_name}_compare'
 
 trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full', dataset_name=dataset_name,
 	                    display_name='DUTrack'))
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_DTCM', dataset_name=dataset_name,
-                            display_name='dutrack_dutrack_384_full_047_DTCM'))
+# trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_DTCM', dataset_name=dataset_name,
+#                             display_name='dutrack_dutrack_384_full_047_DTCM'))
 trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_updatekey', dataset_name=dataset_name,
                             display_name='dutrack_dutrack_384_full_047_updatekey'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_visualte_e5_005', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_visualte_e5_005'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_vlte_tepolicy_a002_toppolicy30_neg010_e5_005', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_vlte_tepolicy_a002_toppolicy30_neg010_e5_005'))
 
 
 # For VOT evaluate

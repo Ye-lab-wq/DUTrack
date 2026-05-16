@@ -26,6 +26,7 @@ dataset_dict = dict(
     itb=DatasetInfo(module=pt % "itb", class_name="ITBDataset", kwargs=dict()),
     lasot_extension_subset=DatasetInfo(module=pt % "lasotextensionsubset", class_name="LaSOTExtensionSubsetDataset", kwargs=dict()),
     otb_lang=DatasetInfo(module=pt % "otb_lang", class_name="OTB_LangDataset", kwargs=dict()),
+    olod=DatasetInfo(module=pt % "olod", class_name="OLODDataset", kwargs=dict()),
     mgit=DatasetInfo(module=pt % "mgit", class_name="MGITDataset", kwargs=dict()),
 
 )

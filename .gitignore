@@ -1,5 +1,5 @@
 output/
-models/
+/models/
 pretrained_models/
 lib/models/__pycache__/
 lib/__pycache__/

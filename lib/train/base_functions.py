@@ -21,6 +21,7 @@ def update_settings(settings, cfg):
     settings.scale_jitter_factor = {'template': cfg.DATA.TEMPLATE.SCALE_JITTER,
                                     'search': cfg.DATA.SEARCH.SCALE_JITTER}
     settings.grad_clip_norm = cfg.TRAIN.GRAD_CLIP_NORM
+    settings.grad_accum_steps = max(1, int(getattr(cfg.TRAIN, "GRAD_ACCUM_STEPS", 1)))
     settings.print_stats = None
     settings.batchsize = cfg.TRAIN.BATCH_SIZE
     settings.scheduler_type = cfg.TRAIN.SCHEDULER.TYPE

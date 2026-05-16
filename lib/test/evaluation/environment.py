@@ -18,6 +18,7 @@ class EnvSettings:
         self.got10k_path = ''
         self.lasot_path = ''
         self.trackingnet_path = ''
+        self.olod_path = ''
         self.davis_dir = ''
         self.youtubevos_dir = ''
 
@@ -71,6 +72,7 @@ class EnvSettings_ITP:
         self.lasot_path = os.path.join(data_dir, 'lasot')
         self.lasot_lmdb_path = os.path.join(data_dir, 'lasot_lmdb')
         self.trackingnet_path = os.path.join(data_dir, 'trackingnet')
+        self.olod_path = os.path.join(data_dir, 'OLOD')
         self.vot18_path = os.path.join(data_dir, 'vot2018')
         self.vot22_path = os.path.join(data_dir, 'vot2022')
         self.itb_path = os.path.join(data_dir, 'itb')
