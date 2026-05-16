@@ -86,11 +86,12 @@ class DUTrack(nn.Module):
 
         if self.head_type == "CORNER":
             # run the corner head
-            pred_box, score_map = self.box_head(opt_feat, True)
+            pred_box, score_map_tl, score_map_br = self.box_head(opt_feat, True)
             outputs_coord = box_xyxy_to_cxcywh(pred_box)
             outputs_coord_new = outputs_coord.view(bs, Nq, 4)
             out = {'pred_boxes': outputs_coord_new,
-                   'score_map': score_map,
+                   'corner_score_map_tl': score_map_tl.view(bs, Nq, self.feat_sz_s, self.feat_sz_s),
+                   'corner_score_map_br': score_map_br.view(bs, Nq, self.feat_sz_s, self.feat_sz_s),
                    }
             return out
 

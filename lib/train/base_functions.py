@@ -23,6 +23,7 @@ def update_settings(settings, cfg):
     settings.grad_clip_norm = cfg.TRAIN.GRAD_CLIP_NORM
     settings.print_stats = None
     settings.batchsize = cfg.TRAIN.BATCH_SIZE
+    settings.accum_iter = max(1, int(getattr(cfg.TRAIN, "ACCUM_ITER", 1)))
     settings.scheduler_type = cfg.TRAIN.SCHEDULER.TYPE
 
 

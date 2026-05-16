@@ -20,11 +20,16 @@ dataset_dict = dict(
     lasot=DatasetInfo(module=pt % "lasot", class_name="LaSOTDataset", kwargs=dict()),
     lasot_lmdb=DatasetInfo(module=pt % "lasot_lmdb", class_name="LaSOTlmdbDataset", kwargs=dict()),
     tnl2k=DatasetInfo(module=pt % "tnl2k", class_name="TNL2kDataset", kwargs=dict()),
+    hoot=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split='test')),
+    hoot_all=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split='all')),
+    hoot_balanced20=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split='balanced20')),
+    hoot_balanced40=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split='balanced40')),
 
     vot18=DatasetInfo(module=pt % "vot", class_name="VOTDataset", kwargs=dict()),
     vot22=DatasetInfo(module=pt % "vot", class_name="VOTDataset", kwargs=dict(year=22)),
     itb=DatasetInfo(module=pt % "itb", class_name="ITBDataset", kwargs=dict()),
     lasot_extension_subset=DatasetInfo(module=pt % "lasotextensionsubset", class_name="LaSOTExtensionSubsetDataset", kwargs=dict()),
+    lasot_extension_subset_lang=DatasetInfo(module=pt % "lasotextensionsubset_lang", class_name="LaSOTExtensionSubset_LangDataset", kwargs=dict()),
     otb_lang=DatasetInfo(module=pt % "otb_lang", class_name="OTB_LangDataset", kwargs=dict()),
     mgit=DatasetInfo(module=pt % "mgit", class_name="MGITDataset", kwargs=dict()),
 

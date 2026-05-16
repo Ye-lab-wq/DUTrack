@@ -8,7 +8,8 @@ class LanguageConditionedTokenScore(nn.Module):
 
     def __init__(self, dim, hidden_dim=256, lang_pool="cls", lang_refine=False,
                  lang_refine_alpha=0.5, lang_refine_temp=1.0, lang_refine_mode="visual_soft",
-                 lang_residual_beta=0.1, lang_subject_hard=True):
+                 lang_residual_beta=0.1, lang_subject_hard=True, te_enable=False,
+                 te_tau=1.0, te_hard=True):
         super().__init__()
         self.lang_pool = lang_pool
         self.lang_refine = lang_refine
@@ -17,6 +18,9 @@ class LanguageConditionedTokenScore(nn.Module):
         self.lang_refine_mode = lang_refine_mode
         self.lang_residual_beta = lang_residual_beta
         self.lang_subject_hard = lang_subject_hard
+        self.te_enable = te_enable
+        self.te_tau = te_tau
+        self.te_hard = te_hard
 
         self.visual_proj = nn.Sequential(
             nn.LayerNorm(dim),
@@ -34,6 +38,11 @@ class LanguageConditionedTokenScore(nn.Module):
             nn.Linear(hidden_dim * 4, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
+        )
+        self.te_head = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 2),
         )
         self.subject_head = nn.Sequential(
             nn.LayerNorm(dim),
@@ -100,10 +109,23 @@ class LanguageConditionedTokenScore(nn.Module):
 
         product = visual * lang
         distance = (visual - lang).abs()
-        logits = self.score_head(torch.cat([visual, lang, product, distance], dim=-1)).squeeze(-1)
+        relation = torch.cat([visual, lang, product, distance], dim=-1)
+        logits = self.score_head(relation).squeeze(-1)
         consistency = product.sum(dim=-1)
         logits = logits + self.consistency_scale * consistency
-        return logits, torch.sigmoid(logits), consistency
+        return logits, torch.sigmoid(logits), consistency, relation
+
+    def _te_mask(self, relation):
+        te_logits = self.te_head(relation)
+        tau = max(float(self.te_tau), 1e-6)
+        if self.training:
+            te_decision = F.gumbel_softmax(te_logits, tau=tau, hard=self.te_hard, dim=-1)
+        elif self.te_hard:
+            te_index = te_logits.argmax(dim=-1)
+            te_decision = F.one_hot(te_index, num_classes=2).to(dtype=te_logits.dtype)
+        else:
+            te_decision = F.softmax(te_logits / tau, dim=-1)
+        return te_logits, te_decision[..., 1]
 
     def forward(self, z_feat, x_feat, l_feat, num_templates=1, lang_mask=None):
         batch_size, z_len, _ = z_feat.shape
@@ -113,8 +135,8 @@ class LanguageConditionedTokenScore(nn.Module):
         tokens_per_template = z_len // num_templates
 
         lang_context, lang_weight = self._refine_language(z_feat, l_feat, lang_mask)
-        z_logits_flat, z_score_flat, z_consistency_flat = self._score_tokens(z_feat, lang_context)
-        x_logits, x_score, x_consistency = self._score_tokens(x_feat, lang_context)
+        z_logits_flat, z_score_flat, z_consistency_flat, z_relation_flat = self._score_tokens(z_feat, lang_context)
+        x_logits, x_score, x_consistency, x_relation = self._score_tokens(x_feat, lang_context)
 
         z_logits = z_logits_flat.view(batch_size, num_templates, tokens_per_template)
         z_score = z_score_flat.view(batch_size, num_templates, tokens_per_template)
@@ -131,4 +153,11 @@ class LanguageConditionedTokenScore(nn.Module):
         }
         if lang_weight is not None:
             out["language_token_weights"] = lang_weight
+        if self.te_enable:
+            z_te_logits_flat, z_te_mask_flat = self._te_mask(z_relation_flat)
+            x_te_logits, x_te_mask = self._te_mask(x_relation)
+            out["vl_te_logits_z"] = z_te_logits_flat.view(batch_size, num_templates, tokens_per_template, 2)
+            out["vl_te_mask_z"] = z_te_mask_flat.view(batch_size, num_templates, tokens_per_template)
+            out["vl_te_logits_x"] = x_te_logits
+            out["vl_te_mask_x"] = x_te_mask
         return out

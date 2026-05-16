@@ -50,6 +50,7 @@ class LTRTrainer(BaseTrainer):
         self.move_data_to_gpu = getattr(settings, 'move_data_to_gpu', True)
         self.settings = settings
         self.use_amp = use_amp
+        self.accum_iter = max(1, int(getattr(settings, 'accum_iter', 1)))
         if use_amp:
             self.scaler = GradScaler()
 
@@ -71,6 +72,9 @@ class LTRTrainer(BaseTrainer):
 
         self._init_timing()
 
+        if loader.training:
+            self.optimizer.zero_grad()
+
         for i, data in enumerate(loader, 1):
             self.data_read_done_time = time.time()
             # get inputs
@@ -90,19 +94,24 @@ class LTRTrainer(BaseTrainer):
 
             # backward pass and update weights
             if loader.training:
-                self.optimizer.zero_grad()
+                do_step = (i % self.accum_iter == 0) or (i == len(loader))
+                scaled_loss = loss / self.accum_iter
                 if not self.use_amp:
-                    loss.backward()
-                    if self.settings.grad_clip_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
-                    self.optimizer.step()
+                    scaled_loss.backward()
+                    if do_step:
+                        if self.settings.grad_clip_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
                 else:
-                    self.scaler.scale(loss).backward()
-                    if self.settings.grad_clip_norm > 0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    self.scaler.scale(scaled_loss).backward()
+                    if do_step:
+                        if self.settings.grad_clip_norm > 0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(self.actor.net.parameters(), self.settings.grad_clip_norm)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                        self.optimizer.zero_grad()
 
             # update statistics
             batch_size = data['template_images'].shape[loader.stack_dim]

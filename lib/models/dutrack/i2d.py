@@ -12,14 +12,17 @@ class descriptgenRefiner(nn.Module):
         super().__init__()
         self.processor = BlipProcessor.from_pretrained(blip_dir)
         self.model = BlipForConditionalGeneration.from_pretrained(blip_dir,torch_dtype=torch.float16).to("cuda")
+        self.model.eval()
         self.tokenizer = BertTokenizer.from_pretrained(bert_dir)
 
     def forward(self, image, cls):
-        if cls is None:
-            inputs = self.processor(image, return_tensors="pt").to("cuda", torch.float16)
-        else:
-            inputs = self.processor(image, cls, return_tensors="pt").to("cuda", torch.float16)
-        out = self.model.generate(**inputs)
+        with torch.inference_mode():
+            if cls is None:
+                inputs = self.processor(image, return_tensors="pt").to("cuda", torch.float16)
+            else:
+                inputs = self.processor(image, cls, return_tensors="pt").to("cuda", torch.float16)
+            out = self.model.generate(**inputs, max_new_tokens=20)
         descript = self.processor.decode(out[0], skip_special_tokens=True)
+        del inputs, out
         return descript
 

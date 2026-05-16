@@ -155,10 +155,11 @@ def plot_draw_save(y, x, scores, trackers, plot_draw_styles, result_plot_path, p
     legend_text = []
 
     for id, id_sort in enumerate(index_sort):
+        style = plot_draw_styles[(index_sort.numel() - id - 1) % len(plot_draw_styles)]
         line = ax.plot(x.tolist(), y[id_sort, :].tolist(),
                        linewidth=line_width,
-                       color=plot_draw_styles[index_sort.numel() - id - 1]['color'],
-                       linestyle=plot_draw_styles[index_sort.numel() - id - 1]['line_style'])
+                       color=style['color'],
+                       linestyle=style['line_style'])
 
         plotted_lines.append(line[0])
 

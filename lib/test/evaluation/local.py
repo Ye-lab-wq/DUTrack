@@ -1,5 +1,6 @@
 from lib.test.evaluation.environment import EnvSettings
 
+
 def local_env_settings():
     settings = EnvSettings()
 
@@ -10,6 +11,7 @@ def local_env_settings():
     settings.got10k_path = '/media/b520/KESU1/got10k'
     settings.got_packed_results_path = ''
     settings.got_reports_path = ''
+    settings.hoot_path = '/media/b520/KESU1/HOOT'
     settings.itb_path = '/home/b520/Downloads/yelin/data/itb'
     settings.lasot_extension_subset_path = '/home/b520/Downloads/yelin/data/lasot_extension_subset'
     settings.lasot_lmdb_path = '/home/b520/Downloads/yelin/data/lasot_lmdb'

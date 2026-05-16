@@ -20,6 +20,7 @@ class EnvSettings:
         self.trackingnet_path = ''
         self.davis_dir = ''
         self.youtubevos_dir = ''
+        self.hoot_path = ''
 
         self.got_packed_results_path = ''
         self.got_reports_path = ''
@@ -34,7 +35,7 @@ def create_default_local_file():
     with open(path, 'w') as f:
         settings = EnvSettings()
 
-        f.write('from test.evaluation.environment import EnvSettings\n\n')
+        f.write('from lib.test.evaluation.environment import EnvSettings\n\n')
         f.write('def local_env_settings():\n')
         f.write('    settings = EnvSettings()\n\n')
         f.write('    # Set your local paths here.\n\n')
@@ -46,9 +47,9 @@ def create_default_local_file():
             attr_val = getattr(settings, attr)
             if not attr.startswith('__') and not callable(attr_val):
                 if comment_str is None:
-                    f.write('    settings.{} = \'{}\'\n'.format(attr, attr_val))
+                    f.write("    settings.{} = '{}'\n".format(attr, attr_val))
                 else:
-                    f.write('    settings.{} = \'{}\'    # {}\n'.format(attr, attr_val, comment_str))
+                    f.write("    settings.{} = '{}'    # {}\n".format(attr, attr_val, comment_str))
         f.write('\n    return settings\n\n')
 
 
@@ -78,6 +79,7 @@ class EnvSettings_ITP:
         self.mgit_path = os.path.join(data_dir, 'MGIT')
         self.otb_lang_path = os.path.join(data_dir, 'OTB_sentences')
         self.lasot_extension_subset_path = os.path.join(data_dir, 'lasot_extension_subset')
+        self.hoot_path = os.path.join(data_dir, 'HOOT')
         self.davis_dir = ''
         self.youtubevos_dir = ''
 
@@ -106,9 +108,9 @@ def create_default_local_file_ITP_test(workspace_dir, data_dir, save_dir):
             attr_val = getattr(settings, attr)
             if not attr.startswith('__') and not callable(attr_val):
                 if comment_str is None:
-                    f.write('    settings.{} = \'{}\'\n'.format(attr, attr_val))
+                    f.write("    settings.{} = '{}'\n".format(attr, attr_val))
                 else:
-                    f.write('    settings.{} = \'{}\'    # {}\n'.format(attr, attr_val, comment_str))
+                    f.write("    settings.{} = '{}'    # {}\n".format(attr, attr_val, comment_str))
         f.write('\n    return settings\n\n')
 
 
@@ -120,7 +122,6 @@ def env_settings():
     except:
         env_file = os.path.join(os.path.dirname(__file__), 'local.py')
 
-        # Create a default file
         create_default_local_file()
         raise RuntimeError('YOU HAVE NOT SETUP YOUR local.py!!!\n Go to "{}" and set all the paths you need. '
                            'Then try to run again.'.format(env_file))

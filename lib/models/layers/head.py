@@ -246,10 +246,10 @@ def build_box_head(cfg, hidden_dim):
 
     if "CORNER" in cfg.MODEL.HEAD.TYPE:
         feat_sz = int(cfg.DATA.SEARCH.SIZE / stride)
-        channel = getattr(cfg.MODEL, "NUM_CHANNELS", 256)
+        channel = cfg.MODEL.HEAD.NUM_CHANNELS
         print("head channel: %d" % channel)
         if cfg.MODEL.HEAD.TYPE == "CORNER":
-            corner_head = Corner_Predictor(inplanes=cfg.MODEL.HIDDEN_DIM, channel=channel,
+            corner_head = Corner_Predictor(inplanes=hidden_dim, channel=channel,
                                            feat_sz=feat_sz, stride=stride)
         else:
             raise ValueError()
