@@ -29,6 +29,9 @@ from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from lib.models.dutrack import utils as utils
 from lib.models.dutrack.utils import combine_tokens, recover_tokens
 from lib.models.dutrack.visual_token_emphasizer import VisualTokenEmphasizer
+from lib.models.dutrack.language_token_emphasizer import LanguageGuidedTokenEmphasizer
+from lib.models.dutrack.language_multi_query_prior import LanguageMultiQueryPrior
+from lib.models.dutrack.language_token_state_updater import LanguageTokenStateUpdater
 
 def _cfg(url='', **kwargs):
     return {
@@ -235,7 +238,8 @@ class Attention(nn.Module):
         self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None,
+                policy_bias=None, policy_query_ranges=None):
         B, N, C = x.shape
 
         if self.deepnorm or self.subln:
@@ -276,6 +280,17 @@ class Attention(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.bool()
             attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
+        if policy_bias is not None:
+            if policy_bias.dim() == 3:
+                policy_bias = policy_bias.squeeze(-1)
+            policy_bias = policy_bias.to(dtype=attn.dtype, device=attn.device)
+            key_bias = policy_bias[:, None, None, :]
+            if policy_query_ranges is None:
+                attn = attn + key_bias
+            else:
+                for q_start, q_end in policy_query_ranges:
+                    if q_end > q_start:
+                        attn[:, :, q_start:q_end, :] = attn[:, :, q_start:q_end, :] + key_bias
         attn = attn.softmax(dim=-1).type_as(x)
         if policy is not None:
             if policy.dim() == 3:
@@ -353,19 +368,24 @@ class Block(nn.Module):
 
         self.postnorm = postnorm
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None):
+    def forward(self, x, rel_pos_bias=None, attn_mask=None, policy=None,
+                policy_bias=None, policy_query_ranges=None):
         attn = None
         if self.gamma_2 is None:
             if self.postnorm:
                 if self.attn is not None:
-                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask,
+                                           policy=policy, policy_bias=policy_bias,
+                                           policy_query_ranges=policy_query_ranges)
                     x = x + self.drop_path(
                         self.norm1(feat))
                 x = x + self.drop_path(self.norm2(self.mlp(x)))
             elif self.deepnorm:
                 if self.attn is not None:
                     residual = x
-                    x, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
+                    x, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask,
+                                        policy=policy, policy_bias=policy_bias,
+                                        policy_query_ranges=policy_query_ranges)
                     x = self.drop_path(x)
                     x = residual * self.alpha + x
                     x = self.norm1(x)
@@ -377,20 +397,26 @@ class Block(nn.Module):
                 x = self.norm2(x)
             else:
                 if self.attn is not None:
-                    feat, attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
+                    feat, attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask,
+                                           policy=policy, policy_bias=policy_bias,
+                                           policy_query_ranges=policy_query_ranges)
                     x = x + self.drop_path(
                         feat)
                 x = x + self.drop_path(self.mlp(self.norm2(x)))
         else:
             if self.postnorm:
                 if self.attn is not None:
-                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
+                    feat, attn = self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask,
+                                           policy=policy, policy_bias=policy_bias,
+                                           policy_query_ranges=policy_query_ranges)
                     x = x + self.drop_path(
                         self.gamma_1 * self.norm1(feat))
                 x = x + self.drop_path(self.gamma_2 * self.norm2(self.mlp(x)))
             else:
                 if self.attn is not None:
-                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask, policy=policy)
+                    feat,attn = self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask,
+                                          policy=policy, policy_bias=policy_bias,
+                                          policy_query_ranges=policy_query_ranges)
                     x = x + self.drop_path(self.gamma_1 * feat)
                     # x = x + self.drop_path(
                     #     self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
@@ -973,15 +999,104 @@ class Fast_iTPN(BaseBackbone):
         self.visual_te_pruning_loc = list(getattr(te_cfg, "PRUNING_LOC", [3, 7, 11])) if te_cfg is not None else []
         self.visual_te_hard = bool(getattr(te_cfg, "HARD", False)) if te_cfg is not None else False
         self.visual_te_tau = float(getattr(te_cfg, "TAU", 1.0)) if te_cfg is not None else 1.0
+        self.te_keep_vl = bool(getattr(te_cfg, "KEEP_VL", False)) if te_cfg is not None else False
+        self.te_keep_lv = bool(getattr(te_cfg, "KEEP_LV", False)) if te_cfg is not None else False
+        self.te_bidir_mode = getattr(te_cfg, "BIDIR_MODE", "sequential") if te_cfg is not None else "sequential"
+        self.te_keep_vl_source = getattr(te_cfg, "KEEP_VL_SOURCE", "global") if te_cfg is not None else "global"
+        self.te_policy_apply = getattr(te_cfg, "POLICY_APPLY", "post_softmax") if te_cfg is not None else "post_softmax"
+        self.te_query_scope = getattr(te_cfg, "QUERY_SCOPE", "all") if te_cfg is not None else "all"
+        self.te_pre_softmax_lambda = float(getattr(te_cfg, "PRE_SOFTMAX_LAMBDA", 1.0)) if te_cfg is not None else 1.0
+        self.te_pre_softmax_center = getattr(te_cfg, "PRE_SOFTMAX_CENTER", "none") if te_cfg is not None else "none"
+        self.te_policy_eps = float(getattr(te_cfg, "POLICY_EPS", 1e-4)) if te_cfg is not None else 1e-4
+        self.te_hidden_dim = int(getattr(te_cfg, "HIDDEN_DIM", 256)) if te_cfg is not None else 256
+        self.te_lang_residual_beta = float(getattr(te_cfg, "LANG_RESIDUAL_BETA", 0.1)) if te_cfg is not None else 0.1
+        self.te_proto_topk_target = int(getattr(te_cfg, "PROTO_TOPK_TARGET", 4)) if te_cfg is not None else 4
+        self.te_proto_topk_negative = int(getattr(te_cfg, "PROTO_TOPK_NEGATIVE", 8)) if te_cfg is not None else 8
+        self.te_proto_contrast_tau = float(getattr(te_cfg, "PROTO_CONTRAST_TAU", 0.2)) if te_cfg is not None else 0.2
+        self.te_safe_confirm_gamma = float(getattr(te_cfg, "SAFE_CONFIRM_GAMMA", 0.35)) if te_cfg is not None else 0.35
+        self.te_safe_confirm_tau = float(getattr(te_cfg, "SAFE_CONFIRM_TAU", 0.0)) if te_cfg is not None else 0.0
+        self.te_safe_confirm_max = float(getattr(te_cfg, "SAFE_CONFIRM_MAX", 0.25)) if te_cfg is not None else 0.25
+        self.te_negative_gate_scale = float(getattr(te_cfg, "NEGATIVE_GATE_SCALE", 8.0)) if te_cfg is not None else 8.0
+        self.te_negative_gate_floor = float(getattr(te_cfg, "NEGATIVE_GATE_FLOOR", 0.05)) if te_cfg is not None else 0.05
+        self.te_word_weight_tau = float(getattr(te_cfg, "WORD_WEIGHT_TAU", 0.07)) if te_cfg is not None else 0.07
+        self.te_word_template_weight = float(getattr(te_cfg, "WORD_TEMPLATE_WEIGHT", 1.0)) if te_cfg is not None else 1.0
+        self.te_word_search_weight = float(getattr(te_cfg, "WORD_SEARCH_WEIGHT", 0.5)) if te_cfg is not None else 0.5
+        self.te_word_learned_weight = float(getattr(te_cfg, "WORD_LEARNED_WEIGHT", 0.1)) if te_cfg is not None else 0.1
+        self.lmq_prior_enabled = bool(getattr(te_cfg, "LMQ_ENABLE", False)) if te_cfg is not None else False
+        self.language_query_prior_loc = list(getattr(te_cfg, "LMQ_LOC", [15])) if te_cfg is not None else []
+        self.lmq_num_queries = int(getattr(te_cfg, "LMQ_NUM_QUERIES", 4)) if te_cfg is not None else 4
+        self.lmq_hidden_dim = int(getattr(te_cfg, "LMQ_HIDDEN_DIM", self.te_hidden_dim)) if te_cfg is not None else self.te_hidden_dim
+        self.lmq_dropout = float(getattr(te_cfg, "LMQ_DROPOUT", 0.0)) if te_cfg is not None else 0.0
+        self.lmq_seed_residual = bool(getattr(te_cfg, "LMQ_SEED_RESIDUAL", False)) if te_cfg is not None else False
+        self.lmq_seed_residual_gamma = float(getattr(te_cfg, "LMQ_SEED_RESIDUAL_GAMMA", 0.1)) if te_cfg is not None else 0.1
+        self.lmq_decoder_enable = bool(getattr(te_cfg, "LMQ_DECODER_ENABLE", False)) if te_cfg is not None else False
+        self.lmq_decoder_num_heads = int(getattr(te_cfg, "LMQ_DECODER_NUM_HEADS", 8)) if te_cfg is not None else 8
+        self.lmq_decoder_dropout = float(getattr(te_cfg, "LMQ_DECODER_DROPOUT", 0.1)) if te_cfg is not None else 0.1
+        self.lmq_decoder_ffn_ratio = float(getattr(te_cfg, "LMQ_DECODER_FFN_RATIO", 2.0)) if te_cfg is not None else 2.0
+        self.language_state_enabled = bool(getattr(te_cfg, "LANGUAGE_STATE_ENABLE", False)) if te_cfg is not None else False
+        self.language_state_updater = None
+        if self.language_state_enabled:
+            self.language_state_updater = LanguageTokenStateUpdater(
+                self.embed_dim,
+                hidden_dim=int(getattr(te_cfg, "LANGUAGE_STATE_HIDDEN_DIM", self.te_hidden_dim)),
+                max_delta=float(getattr(te_cfg, "LANGUAGE_STATE_MAX_DELTA", 0.1)),
+                dropout=float(getattr(te_cfg, "LANGUAGE_STATE_DROPOUT", 0.0)),
+                init_gate_bias=float(getattr(te_cfg, "LANGUAGE_STATE_INIT_GATE_BIAS", -4.0)),
+                source_init_gate_bias=getattr(te_cfg, "LANGUAGE_STATE_SOURCE_INIT_GATE_BIAS", None),
+                init_delta_std=float(getattr(te_cfg, "LANGUAGE_STATE_INIT_DELTA_STD", 1e-4)),
+                relation_layers=int(getattr(te_cfg, "LANGUAGE_STATE_RELATION_LAYERS", 1)),
+                relation_heads=int(getattr(te_cfg, "LANGUAGE_STATE_RELATION_HEADS", 4)),
+                visual_evidence_dim=int(getattr(te_cfg, "LANGUAGE_STATE_VISUAL_EVIDENCE_DIM", 8)),
+                update_mode=str(getattr(te_cfg, "LANGUAGE_STATE_UPDATE_MODE", "residual")),
+                alignment_mode=str(getattr(te_cfg, "LANGUAGE_STATE_ALIGNMENT", "position")),
+                alignment_heads=int(getattr(te_cfg, "LANGUAGE_STATE_ALIGNMENT_HEADS", 4)),
+            )
+        self.language_query_priors = nn.ModuleList()
+        if self.lmq_prior_enabled:
+            if self.cat_mode != "direct":
+                raise ValueError("Language multi-query prior currently requires direct token concatenation")
+            for _ in self.language_query_prior_loc:
+                self.language_query_priors.append(
+                    LanguageMultiQueryPrior(
+                        self.embed_dim, hidden_dim=self.lmq_hidden_dim,
+                        num_queries=self.lmq_num_queries, dropout=self.lmq_dropout,
+                        seed_residual=self.lmq_seed_residual,
+                        seed_residual_gamma=self.lmq_seed_residual_gamma,
+                        decoder_enable=self.lmq_decoder_enable,
+                        decoder_num_heads=self.lmq_decoder_num_heads,
+                        decoder_dropout=self.lmq_decoder_dropout,
+                        decoder_ffn_ratio=self.lmq_decoder_ffn_ratio)
+                )
         self.visual_te_predictors = nn.ModuleList()
         if self.visual_te_enabled:
             if self.cat_mode != "direct":
                 raise ValueError("Visual TE currently requires direct token concatenation")
             for _ in self.visual_te_pruning_loc:
-                self.visual_te_predictors.append(
-                    VisualTokenEmphasizer(self.embed_dim, num_heads=self.blocks[-1].attn.num_heads,
-                                          hard=self.visual_te_hard, tau=self.visual_te_tau)
-                )
+                if self.te_keep_vl or self.te_keep_lv:
+                    self.visual_te_predictors.append(
+                        LanguageGuidedTokenEmphasizer(
+                            self.embed_dim, hidden_dim=self.te_hidden_dim,
+                            hard=self.visual_te_hard, tau=self.visual_te_tau,
+                            lang_residual_beta=self.te_lang_residual_beta,
+                            keep_vl_source=self.te_keep_vl_source,
+                            proto_topk_target=self.te_proto_topk_target,
+                            proto_topk_negative=self.te_proto_topk_negative,
+                            proto_contrast_tau=self.te_proto_contrast_tau,
+                            safe_confirm_gamma=self.te_safe_confirm_gamma,
+                            safe_confirm_tau=self.te_safe_confirm_tau,
+                            safe_confirm_max=self.te_safe_confirm_max,
+                            negative_gate_scale=self.te_negative_gate_scale,
+                            negative_gate_floor=self.te_negative_gate_floor,
+                            word_weight_tau=self.te_word_weight_tau,
+                            word_template_weight=self.te_word_template_weight,
+                            word_search_weight=self.te_word_search_weight,
+                            word_learned_weight=self.te_word_learned_weight)
+                    )
+                else:
+                    self.visual_te_predictors.append(
+                        VisualTokenEmphasizer(self.embed_dim, num_heads=self.blocks[-1].attn.num_heads,
+                                              hard=self.visual_te_hard, tau=self.visual_te_tau)
+                    )
 
     def _z_feat(self,z,B):
         z = torch.stack(z, dim=1)
@@ -1018,14 +1133,115 @@ class Fast_iTPN(BaseBackbone):
         return x
 
     def _l_feat(self,l):
-        descript_id = self.tokenizer(l, add_special_tokens=True, truncation=True,pad_to_max_length=True, max_length=16)['input_ids']
-        descript_id_tensor = torch.tensor(descript_id, device=self.pos_embed_x.device)
+        encoded = self.tokenizer(
+            l, add_special_tokens=True, truncation=True, pad_to_max_length=True,
+            max_length=16, return_attention_mask=True)
+        descript_id_tensor = torch.tensor(encoded['input_ids'], device=self.pos_embed_x.device)
+        attention_mask = torch.tensor(encoded['attention_mask'], device=self.pos_embed_x.device)
+        lang_te_mask = attention_mask.clone()
+        for token_id in (self.tokenizer.pad_token_id, self.tokenizer.cls_token_id, self.tokenizer.sep_token_id):
+            if token_id is not None:
+                lang_te_mask = lang_te_mask * (descript_id_tensor != token_id).long()
+        empty_rows = lang_te_mask.sum(dim=1, keepdim=True) == 0
+        lang_te_mask = torch.where(empty_rows, attention_mask, lang_te_mask)
+        lang_te_mask = lang_te_mask.unsqueeze(-1).to(dtype=self.pos_embed_x.dtype)
         l = self.descript_embedding(descript_id_tensor)
         l += self.description_patch_pos_embed(l)
 
-        return l
+        return l, lang_te_mask
 
-    def _fusion_feat(self,z,x,l,B,temporal_query):
+    def _te_query_ranges(self, temporal_len, l_len, z_len, x_len):
+        scope = str(getattr(self, "te_query_scope", "all")).lower()
+        if scope == "all":
+            return None
+        ranges = []
+        l_start = temporal_len
+        z_start = l_start + l_len
+        x_start = z_start + z_len
+        if scope in ("q0", "track0", "target0"):
+            if temporal_len > 0:
+                ranges.append((0, 1))
+        elif scope in ("track", "target"):
+            if temporal_len > 0:
+                ranges.append((0, temporal_len))
+        elif scope in ("track_search", "target_search"):
+            if temporal_len > 0:
+                ranges.append((0, temporal_len))
+            ranges.append((x_start, x_start + x_len))
+        elif scope == "search":
+            ranges.append((x_start, x_start + x_len))
+        elif scope == "visual":
+            ranges.append((z_start, z_start + z_len))
+            ranges.append((x_start, x_start + x_len))
+        elif scope in ("track_visual", "target_visual", "track_template_search", "target_template_search"):
+            if temporal_len > 0:
+                ranges.append((0, temporal_len))
+            ranges.append((z_start, z_start + z_len))
+            ranges.append((x_start, x_start + x_len))
+        else:
+            raise ValueError("Unsupported TE query scope: {}".format(self.te_query_scope))
+        return ranges
+
+    def _build_post_te_policy(self, B, temporal_len, l_len, prev_decision_l,
+                              prev_decision_z, prev_decision_x, dtype, device):
+        prefix = []
+        if temporal_len > 0:
+            prefix.append(torch.ones(B, temporal_len, 1, dtype=dtype, device=device))
+        if prev_decision_l is None:
+            prefix.append(torch.ones(B, l_len, 1, dtype=dtype, device=device))
+        else:
+            prefix.append(prev_decision_l)
+        return torch.cat(prefix + [prev_decision_z, prev_decision_x], dim=1)
+
+    def _build_pre_te_bias(self, B, temporal_len, l_len, z_len, x_len,
+                           prev_decision_l, prev_decision_z, prev_decision_x,
+                           dtype, device):
+        total_len = temporal_len + l_len + z_len + x_len
+        bias = torch.zeros(B, total_len, dtype=dtype, device=device)
+        l_start = temporal_len
+        z_start = l_start + l_len
+        x_start = z_start + z_len
+        eps = max(float(getattr(self, "te_policy_eps", 1e-4)), 1e-8)
+        scale = float(getattr(self, "te_pre_softmax_lambda", 1.0))
+        center_mode = str(getattr(self, "te_pre_softmax_center", "none")).lower()
+        visual_logs = []
+        z_center = None
+        x_center = None
+        if center_mode == "visual":
+            if prev_decision_z is not None:
+                visual_logs.append(prev_decision_z.squeeze(-1).clamp_min(eps).log())
+            if prev_decision_x is not None:
+                visual_logs.append(prev_decision_x.squeeze(-1).clamp_min(eps).log())
+        elif center_mode == "separate":
+            if prev_decision_z is not None:
+                z_center = prev_decision_z.squeeze(-1).clamp_min(eps).log().mean(dim=1, keepdim=True)
+            if prev_decision_x is not None:
+                x_center = prev_decision_x.squeeze(-1).clamp_min(eps).log().mean(dim=1, keepdim=True)
+        elif center_mode != "none":
+            raise ValueError("Unsupported PRE_SOFTMAX_CENTER mode: {}".format(self.te_pre_softmax_center))
+        if visual_logs:
+            visual_center = torch.cat(visual_logs, dim=1).mean(dim=1, keepdim=True)
+        else:
+            visual_center = None
+        if prev_decision_l is not None:
+            bias[:, l_start:z_start] = scale * prev_decision_l.squeeze(-1).clamp_min(eps).log()
+        if prev_decision_z is not None:
+            z_log = prev_decision_z.squeeze(-1).clamp_min(eps).log()
+            if visual_center is not None:
+                z_log = z_log - visual_center
+            elif z_center is not None:
+                z_log = z_log - z_center
+            bias[:, z_start:x_start] = scale * z_log
+        if prev_decision_x is not None:
+            x_log = prev_decision_x.squeeze(-1).clamp_min(eps).log()
+            if visual_center is not None:
+                x_log = x_log - visual_center
+            elif x_center is not None:
+                x_log = x_log - x_center
+            bias[:, x_start:x_start + x_len] = scale * x_log
+        return bias
+
+    def _fusion_feat(self,z,x,l,B,temporal_query, l_mask=None, word_reliability=None):
         temporal_len = 0
         if self.add_cls_token:
             if temporal_query is None:
@@ -1058,38 +1274,166 @@ class Fast_iTPN(BaseBackbone):
         x_start = z_start + z_len
         prev_decision_z = None
         prev_decision_x = None
+        prev_decision_l = None
         te_predictor_idx = 0
+        lmq_prior_idx = 0
         te_policy = None
+        te_policy_bias = None
+        te_query_ranges = self._te_query_ranges(temporal_len, l_len, z_len, x_len)
         te_aux = {}
-        if self.visual_te_enabled:
-            prev_decision_z = torch.ones(B, z_len, 1, dtype=x.dtype, device=x.device)
-            prev_decision_x = torch.ones(B, x_len, 1, dtype=x.dtype, device=x.device)
+        if self.visual_te_enabled or self.lmq_prior_enabled:
             te_aux = {
+                "lang_te_language_decisions": [],
+                "lang_te_language_probs": [],
+                "lang_te_language_logits": [],
+                "lang_te_template_logits": [],
+                "lang_te_search_logits": [],
+                "score_prior_search_decisions": [],
+                "safe_proto_target_scores": [],
+                "safe_proto_negative_scores": [],
+                "safe_proto_margins": [],
+                "word_level_template_scores": [],
+                "word_level_direct_scores": [],
+                "word_level_weights": [],
+                "word_level_reliability": [],
+                "word_level_template_token_scores": [],
+                "word_level_search_token_scores": [],
+                "lmq_prior_scores": [],
+                "lmq_query_prior_maps": [],
+                "lmq_query_fusion_weights": [],
+                "lmq_query_prior_cosine_mean": [],
+                "lmq_query_prior_cosine_max": [],
+                "lmq_query_seed_cosine_mean": [],
+                "lmq_query_seed_cosine_max": [],
+                "lmq_query_lang_attn_cosine_mean": [],
+                "lmq_query_lang_attn_cosine_max": [],
+                "lmq_query_lang_attn_entropy": [],
+                "lmq_query_lang_attn_max": [],
+                "lmq_pooled_query_cosine_mean": [],
+                "lmq_pooled_query_cosine_max": [],
+                "lmq_query_vector_cosine_mean": [],
+                "lmq_query_vector_cosine_max": [],
+                "lmq_query_map_between_std": [],
+                "lmq_prior_score_std": [],
+                "lmq_query_search_attn_entropy": [],
+                "lmq_query_search_attn_max": [],
+                "lmq_decoder_query_delta_norm": [],
                 "visual_te_template_decisions": [],
                 "visual_te_search_decisions": [],
                 "visual_te_template_probs": [],
                 "visual_te_search_probs": [],
             }
+        if self.visual_te_enabled:
+            if l_mask is None:
+                prev_decision_l = torch.ones(B, l_len, 1, dtype=x.dtype, device=x.device)
+            else:
+                prev_decision_l = l_mask.to(dtype=x.dtype, device=x.device)
+            prev_decision_z = torch.ones(B, z_len, 1, dtype=x.dtype, device=x.device)
+            prev_decision_x = torch.ones(B, x_len, 1, dtype=x.dtype, device=x.device)
         for block_idx, blk in enumerate(self.blocks[-self.num_main_blocks:]):
+            if self.lmq_prior_enabled and block_idx in self.language_query_prior_loc:
+                if lmq_prior_idx >= len(self.language_query_priors):
+                    raise ValueError("Not enough language query prior modules for LMQ locations")
+                l_tokens = x[:, temporal_len:temporal_len + l_len, :]
+                x_tokens = x[:, x_start:x_start + x_len, :]
+                lmq_out = self.language_query_priors[lmq_prior_idx](
+                    l_tokens, x_tokens, lang_mask=l_mask)
+                # Keep prior scores attached so tracking loss can train the prior module.
+                te_aux["lmq_prior_scores"].append(lmq_out["prior_scores"])
+                te_aux["lmq_query_prior_maps"].append(lmq_out["query_prior_maps"].detach())
+                te_aux["lmq_query_fusion_weights"].append(lmq_out["query_fusion_weights"].detach())
+                te_aux["lmq_query_prior_cosine_mean"].append(lmq_out["query_prior_cosine_mean"].detach())
+                te_aux["lmq_query_prior_cosine_max"].append(lmq_out["query_prior_cosine_max"].detach())
+                te_aux["lmq_query_seed_cosine_mean"].append(lmq_out["query_seed_cosine_mean"].detach())
+                te_aux["lmq_query_seed_cosine_max"].append(lmq_out["query_seed_cosine_max"].detach())
+                te_aux["lmq_query_lang_attn_cosine_mean"].append(lmq_out["query_lang_attn_cosine_mean"].detach())
+                te_aux["lmq_query_lang_attn_cosine_max"].append(lmq_out["query_lang_attn_cosine_max"].detach())
+                te_aux["lmq_query_lang_attn_entropy"].append(lmq_out["query_lang_attn_entropy"].detach())
+                te_aux["lmq_query_lang_attn_max"].append(lmq_out["query_lang_attn_max"].detach())
+                te_aux["lmq_pooled_query_cosine_mean"].append(lmq_out["pooled_query_cosine_mean"].detach())
+                te_aux["lmq_pooled_query_cosine_max"].append(lmq_out["pooled_query_cosine_max"].detach())
+                te_aux["lmq_query_vector_cosine_mean"].append(lmq_out["query_vector_cosine_mean"].detach())
+                te_aux["lmq_query_vector_cosine_max"].append(lmq_out["query_vector_cosine_max"].detach())
+                te_aux["lmq_query_map_between_std"].append(lmq_out["query_map_between_std"].detach())
+                te_aux["lmq_prior_score_std"].append(lmq_out["prior_score_std"].detach())
+                te_aux["lmq_query_search_attn_entropy"].append(lmq_out["query_search_attn_entropy"].detach())
+                te_aux["lmq_query_search_attn_max"].append(lmq_out["query_search_attn_max"].detach())
+                te_aux["lmq_decoder_query_delta_norm"].append(lmq_out["decoder_query_delta_norm"].detach())
+                lmq_prior_idx += 1
             if self.visual_te_enabled and block_idx in self.visual_te_pruning_loc:
                 if te_predictor_idx >= len(self.visual_te_predictors):
                     raise ValueError("Not enough Visual TE predictors for pruning locations")
                 te_predictor = self.visual_te_predictors[te_predictor_idx]
+                l_tokens = x[:, temporal_len:temporal_len + l_len, :]
                 z_tokens = x[:, z_start:z_start + z_len, :]
                 x_tokens = x[:, x_start:x_start + x_len, :]
-                _, z_prob, prev_decision_z = te_predictor(z_tokens, prev_decision_z)
-                _, x_prob, prev_decision_x = te_predictor(x_tokens, prev_decision_x)
-                prefix_policy = torch.ones(B, prefix_len, 1, dtype=x.dtype, device=x.device)
-                te_policy = torch.cat([prefix_policy, prev_decision_z, prev_decision_x], dim=1)
+                if self.te_keep_vl or self.te_keep_lv:
+                    te_out = te_predictor(
+                        l_tokens, z_tokens, x_tokens,
+                        prev_decision_l, prev_decision_z, prev_decision_x,
+                        keep_vl=self.te_keep_vl, keep_lv=self.te_keep_lv,
+                        bidir_mode=self.te_bidir_mode,
+                        lang_mask=l_mask,
+                        word_reliability=word_reliability)
+                    if self.te_keep_lv:
+                        prev_decision_l = te_out["language_decision"]
+                        te_aux["lang_te_language_decisions"].append(prev_decision_l.detach())
+                        te_aux["lang_te_language_probs"].append(te_out["language_probs"].detach())
+                        te_aux["lang_te_language_logits"].append(te_out["language_logits"])
+                    if self.te_keep_vl:
+                        prev_decision_z = te_out["template_decision"]
+                        prev_decision_x = te_out["search_decision"]
+                        z_prob = te_out["template_probs"]
+                        x_prob = te_out["search_probs"]
+                        te_aux["lang_te_template_logits"].append(te_out["template_logits"])
+                        te_aux["lang_te_search_logits"].append(te_out["search_logits"])
+                        for aux_key in ("safe_proto_target_scores",
+                                        "safe_proto_negative_scores",
+                                        "safe_proto_margins",
+                                        "word_level_template_scores",
+                                        "word_level_direct_scores",
+                                        "word_level_weights",
+                                        "word_level_reliability",
+                                        "word_level_template_token_scores",
+                                        "word_level_search_token_scores"):
+                            if aux_key in te_out:
+                                te_aux[aux_key].append(te_out[aux_key].detach())
+                    else:
+                        z_prob = torch.cat([prev_decision_z, 1.0 - prev_decision_z], dim=-1)
+                        x_prob = torch.cat([prev_decision_x, 1.0 - prev_decision_x], dim=-1)
+                else:
+                    _, z_prob, prev_decision_z = te_predictor(z_tokens, prev_decision_z)
+                    _, x_prob, prev_decision_x = te_predictor(x_tokens, prev_decision_x)
+                te_policy = None
+                te_policy_bias = None
+                if self.te_policy_apply == "post_softmax":
+                    policy_l = prev_decision_l if self.te_keep_lv else None
+                    te_policy = self._build_post_te_policy(
+                        B, temporal_len, l_len, policy_l, prev_decision_z, prev_decision_x, x.dtype, x.device)
+                elif self.te_policy_apply == "pre_softmax":
+                    policy_l = prev_decision_l if self.te_keep_lv else None
+                    policy_z = prev_decision_z if (self.te_keep_vl or not (self.te_keep_vl or self.te_keep_lv)) else None
+                    policy_x = prev_decision_x if (self.te_keep_vl or not (self.te_keep_vl or self.te_keep_lv)) else None
+                    te_policy_bias = self._build_pre_te_bias(
+                        B, temporal_len, l_len, z_len, x_len,
+                        policy_l, policy_z, policy_x, x.dtype, x.device)
+                elif self.te_policy_apply == "none":
+                    pass
+                else:
+                    raise ValueError("Unsupported TE policy apply mode: {}".format(self.te_policy_apply))
                 te_aux["visual_te_template_decisions"].append(prev_decision_z.detach())
                 te_aux["visual_te_search_decisions"].append(prev_decision_x.detach())
+                te_aux["score_prior_search_decisions"].append(prev_decision_x)
                 te_aux["visual_te_template_probs"].append(z_prob.detach())
                 te_aux["visual_te_search_probs"].append(x_prob.detach())
                 te_predictor_idx += 1
-            x,attn = blk(x, policy=te_policy)
+            x,attn = blk(x, policy=te_policy, policy_bias=te_policy_bias,
+                         policy_query_ranges=te_query_ranges)
 
         x = self.norm(x)
         if self.visual_te_enabled and prev_decision_z is not None:
+            if prev_decision_l is not None:
+                te_aux["lang_te_language_quality"] = prev_decision_l.sum(dim=1).squeeze(-1).detach()
             te_aux["visual_te_template_quality"] = prev_decision_z.sum(dim=1).squeeze(-1).detach()
             te_aux["visual_te_search_quality"] = prev_decision_x.sum(dim=1).squeeze(-1).detach()
 
@@ -1112,12 +1456,35 @@ class Fast_iTPN(BaseBackbone):
         return result
 
 
-    def forward_features(self, z, x, l, temporal_query=None, top_K=None):
+    def forward_features(self, z, x, l, temporal_query=None, top_K=None,
+                         word_reliability=None, language_token_state=None,
+                         language_token_mask=None):
         B = x.shape[0]
         z_feat = self._z_feat(z,B)
         x_feat = self._x_feat(x)
-        l_feat = self._l_feat(l)
-        fusion_feat,attn,te_aux = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
+        if language_token_state is None:
+            l_feat, l_mask = self._l_feat(l)
+        else:
+            l_feat = language_token_state.to(device=x_feat.device, dtype=x_feat.dtype)
+            if l_feat.dim() != 3 or l_feat.shape[0] != B or l_feat.shape[-1] != self.embed_dim:
+                raise ValueError(
+                    "language_token_state must have shape (B,L,{}) but got {}".format(
+                        self.embed_dim, tuple(l_feat.shape)))
+            if language_token_mask is None:
+                l_mask = torch.ones(
+                    l_feat.shape[0], l_feat.shape[1], 1,
+                    dtype=x_feat.dtype, device=x_feat.device)
+            else:
+                l_mask = language_token_mask.to(device=x_feat.device, dtype=x_feat.dtype)
+                if l_mask.dim() == 2:
+                    l_mask = l_mask.unsqueeze(-1)
+                if l_mask.shape[:2] != l_feat.shape[:2]:
+                    raise ValueError(
+                        "language_token_mask shape {} must match language_token_state first dims {}".format(
+                            tuple(l_mask.shape), tuple(l_feat.shape[:2])))
+        fusion_feat,attn,te_aux = self._fusion_feat(
+            z_feat,x_feat,l_feat,B,temporal_query,l_mask=l_mask,
+            word_reliability=word_reliability)  #attn(bs,head_num,l,l)
         top_index,att_l2s = self._split_feat(attn,top_K)
         l2s = self._finder(x_feat,top_index)
         if self.training:
@@ -1143,7 +1510,11 @@ class Fast_iTPN(BaseBackbone):
             x (torch.Tensor): merged template and search region feature, [B, L_z+L_x, C]
             attn : None
         """
-        x, aux_dict = self.forward_features(z, x, l, temporal_query, top_K)
+        x, aux_dict = self.forward_features(
+            z, x, l, temporal_query, top_K,
+            word_reliability=kwargs.get("word_reliability", None),
+            language_token_state=kwargs.get("language_token_state", None),
+            language_token_mask=kwargs.get("language_token_mask", None))
 
         return x, aux_dict
 

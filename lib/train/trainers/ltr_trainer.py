@@ -52,6 +52,7 @@ class LTRTrainer(BaseTrainer):
         self.use_amp = use_amp
         if use_amp:
             self.scaler = GradScaler()
+        self._active_train_stage = None
 
     def _set_default_settings(self):
         # Dict of all default values
@@ -135,6 +136,7 @@ class LTRTrainer(BaseTrainer):
 
     def train_epoch(self):
         """Do one epoch for each loader."""
+        self._apply_train_stage()
         for loader in self.loaders:
             if self.epoch % loader.epoch_interval == 0:
                 # 2021.1.10 Set epoch
@@ -205,6 +207,43 @@ class LTRTrainer(BaseTrainer):
             log_str = print_str[:-5] + '\n'
             with open(self.settings.log_file, 'a') as f:
                 f.write(log_str)
+
+    def _current_stage_patterns(self):
+        cfg = getattr(self.actor, "cfg", None)
+        train_cfg = getattr(cfg, "TRAIN", None)
+        if train_cfg is None or not bool(getattr(train_cfg, "STAGED_TRAINING", False)):
+            return None, None
+        switch_epoch = int(getattr(train_cfg, "STAGE_SWITCH_EPOCH", 0))
+        stage_id = 1 if switch_epoch <= 0 or self.epoch < switch_epoch else 2
+        if stage_id == 1:
+            patterns = list(getattr(train_cfg, "STAGE1_PATTERNS", []))
+        else:
+            patterns = list(getattr(train_cfg, "STAGE2_PATTERNS", []))
+        return stage_id, patterns
+
+    def _apply_train_stage(self):
+        stage_id, patterns = self._current_stage_patterns()
+        if stage_id is None:
+            return
+        if self._active_train_stage == stage_id:
+            return
+        matched = []
+        for name, param in self.actor.net.named_parameters():
+            keep_trainable = any(pattern in name for pattern in patterns)
+            param.requires_grad = keep_trainable
+            if keep_trainable:
+                matched.append(name)
+            else:
+                param.grad = None
+        if not matched:
+            raise ValueError("STAGED_TRAINING stage {} matched no parameters. Patterns: {}".format(
+                stage_id, patterns))
+        self.optimizer.zero_grad()
+        self._active_train_stage = stage_id
+        if getattr(self.settings, "local_rank", -1) in [-1, 0]:
+            print("STAGED_TRAINING active stage {} at epoch {}. Patterns: {}".format(
+                stage_id, self.epoch, patterns))
+            print("STAGED_TRAINING matched {} tensors.".format(len(matched)))
 
     def _stats_new_epoch(self):
         # Record learning rate

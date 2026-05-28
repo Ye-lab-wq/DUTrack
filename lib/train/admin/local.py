@@ -3,7 +3,7 @@ class EnvironmentSettings:
         self.workspace_dir = '/home/b520/Downloads/yelin/DUTrack'    # Base directory for saving network checkpoints.
         self.tensorboard_dir = '/home/b520/Downloads/yelin/DUTrack/tensorboard'    # Directory for tensorboard files.
         self.pretrained_networks = '/home/b520/Downloads/yelin/DUTrack/pretrained_networks'
-        self.lasot_dir = '/media/b520/house1/Dataset/lasot'
+        self.lasot_dir = '/home/b520/Downloads/yelin/data/lasot'
         self.got10k_dir = '/media/b520/KESU1/got10k/train'
         self.got10k_val_dir = '/media/b520/KESU1/got10k/val'
         self.lasot_lmdb_dir = '/home/b520/Downloads/yelin/data/lasot_lmdb'

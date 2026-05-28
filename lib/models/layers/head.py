@@ -145,9 +145,10 @@ class CenterPredictor(nn.Module, ):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, x, gt_score_map=None):
+    def forward(self, x, gt_score_map=None, score_bias=None):
         """ Forward pass with input x. x.shape:(B, C, H, W) """
-        score_map_ctr, size_map, offset_map = self.get_score_map(x)
+        score_map_ctr, size_map, offset_map, score_logits_base, score_logits = self.get_score_map(
+            x, score_bias=score_bias, return_score_logits=True)
 
         # assert gt_score_map is None
         if gt_score_map is None:
@@ -155,7 +156,7 @@ class CenterPredictor(nn.Module, ):
         else:
             bbox = self.cal_bbox(gt_score_map.unsqueeze(1), size_map, offset_map)
 
-        return score_map_ctr, bbox, size_map, offset_map
+        return score_map_ctr, bbox, size_map, offset_map, score_logits_base, score_logits
     
             
     def cal_bbox(self, score_map_ctr, size_map, offset_map, return_score=False):
@@ -178,10 +179,10 @@ class CenterPredictor(nn.Module, ):
             return bbox, max_score
         return bbox
 
-    def get_score_map(self, x):
+    def get_score_map(self, x, score_bias=None, return_score_logits=False):
 
         def _sigmoid(x):
-            y = torch.clamp(x.sigmoid_(), min=1e-4, max=1 - 1e-4)
+            y = torch.clamp(x.sigmoid(), min=1e-4, max=1 - 1e-4)
             return y
 
         # ctr branch
@@ -189,7 +190,14 @@ class CenterPredictor(nn.Module, ):
         x_ctr2 = self.conv2_ctr(x_ctr1)
         x_ctr3 = self.conv3_ctr(x_ctr2)
         x_ctr4 = self.conv4_ctr(x_ctr3)
-        score_map_ctr = self.conv5_ctr(x_ctr4)
+        score_logits_base = self.conv5_ctr(x_ctr4)
+        score_map_ctr = score_logits_base
+        if score_bias is not None:
+            if score_bias.shape != score_map_ctr.shape:
+                raise ValueError(
+                    "score_bias shape {} must match score logits shape {}".format(
+                        tuple(score_bias.shape), tuple(score_map_ctr.shape)))
+            score_map_ctr = score_map_ctr + score_bias.to(dtype=score_map_ctr.dtype, device=score_map_ctr.device)
 
         # offset branch
         x_offset1 = self.conv1_offset(x)
@@ -204,7 +212,10 @@ class CenterPredictor(nn.Module, ):
         x_size3 = self.conv3_size(x_size2)
         x_size4 = self.conv4_size(x_size3)
         score_map_size = self.conv5_size(x_size4)
-        return _sigmoid(score_map_ctr), _sigmoid(score_map_size), score_map_offset
+        outputs = (_sigmoid(score_map_ctr), _sigmoid(score_map_size), score_map_offset)
+        if return_score_logits:
+            outputs = outputs + (score_logits_base, score_map_ctr)
+        return outputs
 
 
 class S_Head(nn.Module):

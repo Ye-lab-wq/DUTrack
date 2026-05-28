@@ -4,6 +4,7 @@ import os
 import numpy as np
 
 from lib.test.evaluation.data import BaseDataset, Sequence, SequenceList
+from lib.test.evaluation.language_annotations import lookup_language_description
 from lib.test.utils.load_text import load_text
 
 
@@ -33,11 +34,14 @@ class OLODDataset(BaseDataset):
         anno_path = os.path.join(self.base_path, sequence_info["anno_path"])
         ground_truth_rect = load_text(str(anno_path), delimiter=",", dtype=np.float64, backend="numpy")
 
+        sequence_name = sequence_info["name"]
+        text_description = lookup_language_description("olod", sequence_name, "")
         return Sequence(
-            sequence_info["name"],
+            sequence_name,
             frames,
             "olod",
             ground_truth_rect[init_omit:, :].reshape(-1, 4),
+            text_description=text_description or None,
         )
 
     def __len__(self):

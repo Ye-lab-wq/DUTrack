@@ -89,13 +89,21 @@ class BaseTrainer:
                             self.lr_scheduler.step()
                         else:
                             self.lr_scheduler.step(epoch - 1)
-                    # only save the last 10 checkpoints
                     save_every_epoch = getattr(self.settings, "save_every_epoch", False)
-                    if epoch > (max_epochs - 10) or save_every_epoch or epoch % 1 == 0:
-                    # if epoch > (max_epochs - 10) or save_every_epoch or epoch % 100 == 0:
+                    save_final_only = getattr(self.settings, "save_final_only", False)
+                    save_latest_only = getattr(self.settings, "save_latest_only", False)
+                    if save_latest_only:
+                        should_save = True
+                    elif save_final_only:
+                        should_save = epoch == max_epochs
+                    else:
+                        should_save = epoch > (max_epochs - 10) or save_every_epoch or epoch % 1 == 0
+                    if should_save:
                         if self._checkpoint_dir:
                             if self.settings.local_rank in [-1, 0]:
-                                self.save_checkpoint()
+                                checkpoint_path = self.save_checkpoint()
+                                if save_latest_only:
+                                    self._remove_other_checkpoints(checkpoint_path)
             except:
                 print('Training crashed at epoch {}'.format(epoch))
                 if fail_safe:
@@ -145,6 +153,16 @@ class BaseTrainer:
 
         # Now rename to actual checkpoint. os.rename seems to be atomic if files are on same filesystem. Not 100% sure
         os.rename(tmp_file_path, file_path)
+        return file_path
+
+    def _remove_other_checkpoints(self, keep_path):
+        directory = os.path.dirname(keep_path)
+        keep_path = os.path.abspath(keep_path)
+        for checkpoint_path in glob.glob(os.path.join(directory, '*_ep*.pth.tar')):
+            checkpoint_path = os.path.abspath(checkpoint_path)
+            if checkpoint_path == keep_path:
+                continue
+            os.remove(checkpoint_path)
 
     def load_checkpoint(self, checkpoint = None, fields = None, ignore_fields = None, load_constructor = False):
         """Loads a network checkpoint file.
