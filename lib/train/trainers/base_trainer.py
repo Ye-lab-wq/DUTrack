@@ -2,6 +2,8 @@ import os
 import glob
 import torch
 import traceback
+import re
+from pathlib import Path
 from lib.train.admin import multigpu
 from torch.utils.data.distributed import DistributedSampler
 
@@ -145,6 +147,25 @@ class BaseTrainer:
 
         # Now rename to actual checkpoint. os.rename seems to be atomic if files are on same filesystem. Not 100% sure
         os.rename(tmp_file_path, file_path)
+        self._cleanup_old_checkpoints(directory, net_type)
+
+    def _cleanup_old_checkpoints(self, directory, net_type):
+        keep_last = int(getattr(self.settings, 'keep_last_checkpoints', 0) or 0)
+        keep_epochs = set(int(epoch) for epoch in getattr(self.settings, 'keep_checkpoint_epochs', []) or [])
+        if keep_last <= 0 and not keep_epochs:
+            return
+
+        checkpoint_list = sorted(Path(directory).glob('{}_ep*.pth.tar'.format(net_type)))
+        keep_paths = set(checkpoint_list[-keep_last:]) if keep_last > 0 else set()
+        for checkpoint_path in checkpoint_list:
+            match = re.search(r'_ep(\d+)\.pth\.tar$', checkpoint_path.name)
+            if match and int(match.group(1)) in keep_epochs:
+                keep_paths.add(checkpoint_path)
+
+        for checkpoint_path in checkpoint_list:
+            if checkpoint_path in keep_paths:
+                continue
+            checkpoint_path.unlink()
 
     def load_checkpoint(self, checkpoint = None, fields = None, ignore_fields = None, load_constructor = False):
         """Loads a network checkpoint file.

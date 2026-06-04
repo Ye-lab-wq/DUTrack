@@ -26,6 +26,7 @@ from typing import Union, List
 from lib.models.dutrack.base_backbone import BaseBackbone
 from transformers import BertTokenizer
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
+from lib.models.dutrack.language_masks import build_evidence_anchor_mask, build_semantic_token_mask
 from lib.models.dutrack import utils as utils
 from lib.models.dutrack.utils import combine_tokens, recover_tokens
 
@@ -990,12 +991,34 @@ class Fast_iTPN(BaseBackbone):
         return x
 
     def _l_feat(self,l):
-        descript_id = self.tokenizer(l, add_special_tokens=True, truncation=True,pad_to_max_length=True, max_length=16)['input_ids']
-        descript_id_tensor = torch.tensor(descript_id)
-        l = self.descript_embedding(descript_id_tensor.to('cuda'))
+        descript = self.tokenizer(
+            l,
+            add_special_tokens=True,
+            truncation=True,
+            padding='max_length',
+            max_length=16,
+            return_special_tokens_mask=True,
+        )
+        device = self.pos_embed_x.device
+        descript_id_tensor = torch.tensor(descript['input_ids'], device=device)
+        attention_mask = torch.tensor(descript['attention_mask'], device=device, dtype=torch.bool)
+        special_tokens_mask = torch.tensor(descript['special_tokens_mask'], device=device, dtype=torch.bool)
+        valid_token_mask = attention_mask & ~special_tokens_mask
+        semantic_token_mask = build_semantic_token_mask(
+            self.tokenizer,
+            descript['input_ids'],
+            valid_token_mask,
+        )
+        evidence_anchor_mask = build_evidence_anchor_mask(
+            self.tokenizer,
+            descript['input_ids'],
+            valid_token_mask,
+        )
+
+        l = self.descript_embedding(descript_id_tensor)
         l += self.description_patch_pos_embed(l)
 
-        return l
+        return l, valid_token_mask, semantic_token_mask, evidence_anchor_mask
 
     def _fusion_feat(self,z,x,l,B,temporal_query):
         if self.add_cls_token:
@@ -1045,13 +1068,19 @@ class Fast_iTPN(BaseBackbone):
         B = x.shape[0]
         z_feat = self._z_feat(z,B)
         x_feat = self._x_feat(x)
-        l_feat = self._l_feat(l)
+        l_feat, l_mask, semantic_l_mask, evidence_anchor_mask = self._l_feat(l)
         fusion_feat,attn = self._fusion_feat(z_feat,x_feat,l_feat,B,temporal_query)  #attn(bs,head_num,l,l)
         top_index,att_l2s = self._split_feat(attn,top_K)
         l2s = self._finder(x_feat,top_index)
         aux_dict = {"attn": attn,
                     "attn_l2s": att_l2s,
-                    "temproal_token": l2s}
+                    "temproal_token": l2s,
+                    "l_raw": l_feat,
+                    "l_mask": l_mask,
+                    "semantic_l_mask": semantic_l_mask,
+                    "evidence_anchor_mask": evidence_anchor_mask,
+                    "len_l": l_feat.shape[1],
+                    "len_z": z_feat.shape[1]}
 
         return fusion_feat, aux_dict
 

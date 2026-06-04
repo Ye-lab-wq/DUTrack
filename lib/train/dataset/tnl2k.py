@@ -65,7 +65,8 @@ class TNL2k(BaseVideoDataset):
         return sequence_list
 
     def _create_data_index(self):
-        tnl2k_cache_root = "/home/local_data/lxh/code/LoRAVL/lib/train/data_specs/tnl2k_index"
+        tnl2k_cache_root = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', 'data_specs', 'tnl2k_index'))
         if not os.path.exists(tnl2k_cache_root):
             os.makedirs(tnl2k_cache_root)
         if os.path.exists(os.path.join(tnl2k_cache_root, 'index.json')):

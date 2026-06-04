@@ -4,7 +4,7 @@ class EnvironmentSettings:
         self.tensorboard_dir = '/home/b520/Downloads/yelin/DUTrack/tensorboard'    # Directory for tensorboard files.
         self.pretrained_networks = '/home/b520/Downloads/yelin/DUTrack/pretrained_networks'
         self.lasot_dir = '/home/b520/Downloads/yelin/data/lasot'
-        self.got10k_dir = '/home/b520/Downloads/yelin/data/got10k/train'
+        self.got10k_dir = '/media/b520/KESU1/got10k/train'
         self.got10k_val_dir = '/home/b520/Downloads/yelin/data/got10k/val'
         self.lasot_lmdb_dir = '/home/b520/Downloads/yelin/data/lasot_lmdb'
         self.got10k_lmdb_dir = '/home/b520/Downloads/yelin/data/got10k_lmdb'
@@ -20,5 +20,5 @@ class EnvironmentSettings:
         self.ecssd_dir = ''
         self.hkuis_dir = ''
         self.msra10k_dir = ''
-        self.tnl2k_dir = '/home/b520/Downloads/yelin/data/TNL2K'
+        self.tnl2k_dir = '/media/b520/KESU1/TNL2K'
         self.mgit_dir = '/home/b520/Downloads/yelin/data/MGIT'

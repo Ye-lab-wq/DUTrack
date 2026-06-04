@@ -24,6 +24,8 @@ def update_settings(settings, cfg):
     settings.print_stats = None
     settings.batchsize = cfg.TRAIN.BATCH_SIZE
     settings.scheduler_type = cfg.TRAIN.SCHEDULER.TYPE
+    settings.keep_last_checkpoints = getattr(cfg.TRAIN, "KEEP_LAST_CHECKPOINTS", 0)
+    settings.keep_checkpoint_epochs = getattr(cfg.TRAIN, "KEEP_CHECKPOINT_EPOCHS", [])
 
 
 def names2datasets(name_list: list, settings, image_loader):

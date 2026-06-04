@@ -27,6 +27,10 @@ dataset_dict = dict(
     lasot_extension_subset=DatasetInfo(module=pt % "lasotextensionsubset", class_name="LaSOTExtensionSubsetDataset", kwargs=dict()),
     otb_lang=DatasetInfo(module=pt % "otb_lang", class_name="OTB_LangDataset", kwargs=dict()),
     mgit=DatasetInfo(module=pt % "mgit", class_name="MGITDataset", kwargs=dict()),
+    hoot=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split="test")),
+    hoot_all=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split="all")),
+    hoot_balanced40=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split="balanced40")),
+    hoot_random50=DatasetInfo(module=pt % "hoot", class_name="HOOTDataset", kwargs=dict(split="random50")),
 
 )
 

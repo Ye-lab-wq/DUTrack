@@ -12,12 +12,26 @@ dataset_name = 'otb_lang'
 
 report_name = f'{dataset_name}_compare'
 
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full', dataset_name=dataset_name,
-	                    display_name='DUTrack'))
-trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_DTCM', dataset_name=dataset_name,
-                            display_name='dutrack_dutrack_384_full_047_DTCM'))
 trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_047_updatekey', dataset_name=dataset_name,
                             display_name='dutrack_dutrack_384_full_047_updatekey'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_lang_normal', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_lang_normal'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_lang_shuffle', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_lang_shuffle'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_lang_wrong', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_lang_wrong'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_lang_generic', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_lang_generic'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_lang_no_update', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_lang_no_update'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_evidence_stage2', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_evidence_stage2'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_tec_stage1', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_tec_stage1'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_tec_stage1_generic', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_tec_stage1_generic'))
+trackers.extend(trackerlist(name='dutrack', parameter_name='dutrack_384_full_tec_stage1_wrong', dataset_name=dataset_name,
+                            display_name='dutrack_dutrack_384_full_tec_stage1_wrong'))
 
 
 # For VOT evaluate

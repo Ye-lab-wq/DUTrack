@@ -76,6 +76,7 @@ class EnvSettings_ITP:
         self.itb_path = os.path.join(data_dir, 'itb')
         self.tnl2k_path = os.path.join(data_dir, 'TNL2K')
         self.mgit_path = os.path.join(data_dir, 'MGIT')
+        self.hoot_path = os.path.join(data_dir, 'HOOT')
         self.otb_lang_path = os.path.join(data_dir, 'OTB_sentences')
         self.lasot_extension_subset_path = os.path.join(data_dir, 'lasot_extension_subset')
         self.davis_dir = ''

@@ -128,7 +128,16 @@ class DUTrackActor(BaseActor):
                         f"{i}frame_Loss/l1": l1_loss.item(),
                         f"{i}frame_Loss/location": location_loss.item(),
                         f"{i}frame_IoU": mean_iou.item()}
-                    
+                for aux_key, aux_value in pred_dict[i].items():
+                    if not torch.is_tensor(aux_value) or aux_value.numel() != 1:
+                        continue
+                    if aux_key.startswith("tec_"):
+                        status[f"{i}frame_TEC/{aux_key}"] = aux_value.detach().mean().item()
+                    elif aux_key.startswith("stage2_"):
+                        status[f"{i}frame_Stage2Evidence/{aux_key}"] = aux_value.detach().mean().item()
+                    elif aux_key.startswith("stage2r_"):
+                        status[f"{i}frame_Stage2REvidenceUnit/{aux_key}"] = aux_value.detach().mean().item()
+
                 total_status.update(status)
 
         if return_status:

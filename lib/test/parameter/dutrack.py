@@ -21,12 +21,13 @@ def parameters(yaml_name: str, run_id=None):
     params.search_size = cfg.TEST.SEARCH_SIZE
 
     # Network checkpoint path
+    checkpoint_name = getattr(cfg.TEST, "CHECKPOINT_NAME", "") or yaml_name
     if run_id is None:
         params.checkpoint = os.path.join(save_dir, "checkpoints/train/dutrack/%s/DUTrack_ep%04d.pth.tar" %
-                                        (yaml_name, cfg.TEST.EPOCH))
+                                        (checkpoint_name, cfg.TEST.EPOCH))
     else:
         params.checkpoint = os.path.join(save_dir, "checkpoints/train/dutrack/%s/DUTrack_ep%04d.pth.tar" %
-                                        (yaml_name, run_id))
+                                        (checkpoint_name, run_id))
     
     # whether to save boxes from all queries
     params.save_all_boxes = False
